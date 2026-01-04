@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Send, Clipboard, AlertCircle, CheckCircle, X, Sparkles, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useData } from '@/context'
-import { isAIConfigured } from '@/lib/ai'
 
 export function InputDock() {
   const [input, setInput] = useState('')
@@ -81,8 +80,6 @@ export function InputDock() {
     }
   }, [handleSubmit])
 
-  const aiConfigured = isAIConfigured()
-
   return (
     <motion.div
       initial={{ y: 100, opacity: 0 }}
@@ -124,14 +121,6 @@ export function InputDock() {
               </motion.div>
             )}
           </AnimatePresence>
-
-          {/* AI Status Banner */}
-          {!aiConfigured && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl mb-3 text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <AlertCircle className="h-3 w-3" />
-              <span>AI parsing not configured. Add VITE_OPENAI_API_KEY.</span>
-            </div>
-          )}
 
           {/* Input Area */}
           <div className={cn(
