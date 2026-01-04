@@ -171,7 +171,7 @@ export function InputDock() {
               rows={1}
               className={cn(
                 'flex-1 bg-transparent border-none resize-none',
-                'text-white placeholder:text-slate-500',
+                'text-base text-white placeholder:text-slate-500',
                 'py-3 px-2 max-h-[150px]',
                 'focus:outline-none'
               )}

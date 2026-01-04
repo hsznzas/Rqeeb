@@ -15,7 +15,7 @@ import {
 // Dashboard layout with header (for pages that need navigation)
 function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="min-h-[100dvh] bg-slate-950">
       <Header />
       {children}
     </div>

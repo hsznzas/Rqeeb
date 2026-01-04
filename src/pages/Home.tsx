@@ -1515,7 +1515,7 @@ export function HomePage() {
   }, [transactionAttachments])
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col">
+    <div className="min-h-[100dvh] bg-slate-950 flex flex-col">
       {/* Summary Header */}
       <SummaryHeader accounts={accounts} summary={summary} displayCurrency={defaultCurrency} />
 
