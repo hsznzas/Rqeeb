@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Liquid Glass Design System - Base Styles */
+@layer base {
+  :root {
+    /* Glass materials */
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-bg-hover: rgba(255, 255, 255, 0.08);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-border-hover: rgba(255, 255, 255, 0.15);
+    
+    /* Semantic colors */
+    --color-income: #10b981;
+    --color-expense: #f43f5e;
+    --color-accent: #f59e0b;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 overflow-x-hidden;
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(244, 63, 94, 0.06) 0px, transparent 50%),
+      radial-gradient(at 50% 100%, rgba(245, 158, 11, 0.05) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+
+  /* Custom scrollbar for Liquid Glass */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-white/20;
+  }
+
+  /* Remove default focus outline and add custom */
+  *:focus {
+    outline: none;
+  }
+
+  *:focus-visible {
+    @apply ring-2 ring-emerald-500/50 ring-offset-2 ring-offset-slate-950;
+  }
+}
+
+@layer components {
+  /* Glass Card Component */
+  .glass-card {
+    @apply bg-white/[0.05] backdrop-blur-md border border-white/10 rounded-2xl shadow-glass;
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-300;
+    @apply hover:bg-white/[0.08] hover:border-white/15 hover:shadow-glass-lg;
+  }
+
+  /* Glass Button */
+  .glass-button {
+    @apply px-4 py-2 bg-white/[0.08] backdrop-blur-sm border border-white/10 rounded-xl;
+    @apply transition-all duration-200;
+    @apply hover:bg-white/[0.12] hover:border-white/20;
+    @apply active:scale-[0.98];
+  }
+
+  /* Glass Input */
+  .glass-input {
+    @apply w-full px-4 py-3 bg-white/[0.05] backdrop-blur-sm border border-white/10 rounded-xl;
+    @apply text-white placeholder:text-slate-400;
+    @apply transition-all duration-200;
+    @apply focus:bg-white/[0.08] focus:border-emerald-500/50;
+  }
+
+  /* Income/Expense Pills */
+  .pill-income {
+    @apply px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full text-sm font-medium;
+    @apply border border-emerald-500/30;
+  }
+
+  .pill-expense {
+    @apply px-3 py-1 bg-rose-500/20 text-rose-400 rounded-full text-sm font-medium;
+    @apply border border-rose-500/30;
+  }
+
+  /* Amount Display */
+  .amount-income {
+    @apply text-emerald-400 font-semibold;
+  }
+
+  .amount-expense {
+    @apply text-rose-400 font-semibold;
+  }
+
+  /* Shimmer loading effect */
+  .shimmer {
+    @apply animate-shimmer bg-gradient-to-r from-transparent via-white/10 to-transparent;
+    background-size: 200% 100%;
+  }
+}
+
+@layer utilities {
+  /* Text gradient utilities */
+  .text-gradient-income {
+    @apply bg-gradient-to-r from-emerald-400 to-emerald-300 bg-clip-text text-transparent;
+  }
+
+  .text-gradient-expense {
+    @apply bg-gradient-to-r from-rose-400 to-rose-300 bg-clip-text text-transparent;
+  }
+
+  .text-gradient-accent {
+    @apply bg-gradient-to-r from-amber-400 to-amber-300 bg-clip-text text-transparent;
+  }
+
+  /* Glow effects */
+  .glow-income {
+    @apply shadow-glow-income;
+  }
+
+  .glow-expense {
+    @apply shadow-glow-expense;
+  }
+
+  .glow-accent {
+    @apply shadow-glow-accent;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
