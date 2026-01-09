@@ -78,9 +78,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (initializedRef.current) return
     initializedRef.current = true
 
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
     const initAuth = async () => {
+      // Safety timeout - if auth doesn't resolve in 10 seconds, stop loading
+      // This prevents infinite spinner on network issues or cold starts
+      timeoutId = setTimeout(() => {
+        console.warn('Auth initialization timed out after 10s')
+        setState({
+          user: null,
+          session: null,
+          profile: null,
+          isLoading: false,
+          isAuthenticated: false,
+        })
+      }, 10000)
+
       try {
         const { data: { session }, error } = await supabase.auth.getSession()
+        
+        // Clear timeout since we got a response
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
         
         if (error) {
           console.error('Auth initialization error:', error)
@@ -95,14 +116,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (session?.user) {
-          // User is logged in - fetch profile in background
-          const profile = await fetchProfile(session.user.id)
+          // User is logged in - set authenticated immediately, fetch profile in background
           setState({
             user: session.user,
             session: session,
-            profile,
+            profile: null, // Profile loads in background
             isLoading: false,
             isAuthenticated: true,
+          })
+          
+          // Fetch profile in background (non-blocking)
+          fetchProfile(session.user.id).then(profile => {
+            if (profile) {
+              setState(prev => ({ ...prev, profile }))
+            }
           })
         } else {
           // No session
@@ -115,6 +142,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           })
         }
       } catch (error) {
+        // Clear timeout on error
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
         console.error('Auth initialization error:', error)
         setState({
           user: null,
@@ -167,6 +199,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       subscription.unsubscribe()
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
     }
   }, [fetchProfile])
 
