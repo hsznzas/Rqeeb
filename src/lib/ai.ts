@@ -23,6 +23,7 @@ export interface ParsedTransaction {
   direction: 'in' | 'out'
   payment_hint: string | null
   notes: string | null
+  description: string | null // Rich data: Available Balance, Ref Numbers, Campaign info, etc.
 }
 
 export interface BulkParseResult {
@@ -142,6 +143,7 @@ export async function parseTransactions(text: string): Promise<BulkParseResult> 
         direction: tx.direction === 'in' ? 'in' : 'out',
         payment_hint: tx.payment_hint || tx.account_hint || null,
         notes: tx.notes || null,
+        description: tx.description || null, // Rich data: balance, refs, campaign info
       })
     }
 

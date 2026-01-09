@@ -3,19 +3,22 @@
  * 
  * This function securely calls OpenAI from the server side,
  * keeping the API key hidden from the browser.
+ * 
+ * Supports BULK processing of up to 50 transactions at once.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
-// System prompt for bulk financial parsing with proper date/time extraction
+// System prompt for bulk financial parsing with RICH DATA extraction
 const SYSTEM_PROMPT = `You are a financial transaction parser for a Saudi Arabian personal finance app. Your job is to extract structured data from text messages (like bank SMS, receipts, or manual notes).
 
 CRITICAL RULES:
 1. Return ONLY valid JSON - an array of transaction objects
 2. You MUST ALWAYS return a JSON array of transactions, even if there's only one transaction
-3. The input may contain multiple transactions separated by newlines, commas, or listed together
+3. The input may contain MANY transactions (up to 50) separated by newlines, paragraph breaks, or listed together
+4. Parse EACH transaction individually - do not skip any
 
 DATE & TIME EXTRACTION (CRITICAL):
 - Extract the EXACT date and time from the input if provided
@@ -25,24 +28,38 @@ DATE & TIME EXTRACTION (CRITICAL):
 - If no date/time is provided, use the current timestamp provided below
 - PRESERVE the original date from the input - do NOT default to today's date if a specific date is given
 - Accept future dates without modification (user may be planning entries)
+- Handle relative dates: "Yesterday" = previous day, "Last Monday" = the most recent Monday before today
 
 AMOUNT RULES:
 - Extract each transaction amount as a positive number
-- Determine if money is coming IN (income/received/deposit/salary) or going OUT (expense/payment/purchase/spent)
+- Determine if money is coming IN (income/received/deposit/salary/credit) or going OUT (expense/payment/purchase/spent/debit)
 
 CATEGORIZATION:
 - Identify the merchant/source if mentioned
-- Look for payment method hints - any mention of card name, bank name, last 4 digits, or wallet type
-- Categorize into: Food & Dining, Transportation, Shopping, Bills & Utilities, Groceries, Health, Transfer, Entertainment, Income, Travel, Education, Other
+- Look for payment method hints - any mention of card name, bank name, last 4 digits (like *552), or wallet type
+- Categorize into: Food & Dining, Transportation, Shopping, Bills & Utilities, Groceries, Health, Transfer, Entertainment, Income, Travel, Education, Advertising, Subscription, Other
 - Default currency to SAR if not specified. Recognize: SAR, USD, EUR, GBP, AED, ريال, $, €, £
+
+RICH DATA EXTRACTION (CRITICAL - DO NOT DISCARD):
+Bank SMS messages contain valuable auxiliary information. You MUST extract ALL of the following into the "description" field:
+- Available Balance (e.g., "Available Balance: AED 67471.11")
+- Reference Numbers (e.g., "Ref: 123456789")
+- Campaign names or purposes (e.g., "For: Ajdel Campaign", "For Campaign X")
+- Account indicators (e.g., "Account: *552", "a/c *1234")
+- Transaction IDs or authorization codes
+- Any other context that isn't the date, merchant, amount, or category
+
+Format the description as: "Key1: Value1 | Key2: Value2 | Key3: Value3"
 
 PAYMENT METHOD HINT EXAMPLES:
 - "on my Visa" → payment_hint: "Visa"
 - "from AlRajhi" → payment_hint: "AlRajhi"
 - "card ending 8844" → payment_hint: "8844"
+- "a/c *552" → payment_hint: "*552"
 - "using Apple Pay" → payment_hint: "Apple Pay"
 - "paid cash" → payment_hint: "cash"
 - "from wallet" → payment_hint: "wallet"
+- "debited from your a/c *552" → payment_hint: "*552"
 
 ALWAYS return this exact JSON structure (an array):
 {
@@ -55,25 +72,39 @@ ALWAYS return this exact JSON structure (an array):
       "transaction_datetime": "<ISO 8601 string, e.g. 2026-01-04T13:52:00>",
       "direction": "<in or out>",
       "payment_hint": "<string or null>",
-      "notes": "<any additional context or null>"
+      "notes": "<user notes or null>",
+      "description": "<auxiliary info: balance, refs, campaign, account details | null>"
     }
   ]
 }
 
 EXAMPLES:
 
+Example 1 - Simple transaction:
 Input: "Coffee 25 SAR on 2026-01-04 at 2:30pm"
-Output: {"transactions": [{"amount": 25, "currency": "SAR", "category": "Food & Dining", "merchant": "Coffee", "transaction_datetime": "2026-01-04T14:30:00", "direction": "out", "payment_hint": null, "notes": null}]}
+Output: {"transactions": [{"amount": 25, "currency": "SAR", "category": "Food & Dining", "merchant": "Coffee", "transaction_datetime": "2026-01-04T14:30:00", "direction": "out", "payment_hint": null, "notes": null, "description": null}]}
 
+Example 2 - Multiple transactions:
 Input: "Uber 45 on Jan 3rd, Starbucks 30 yesterday"
 (If today is 2026-01-04)
 Output: {"transactions": [
-  {"amount": 45, "currency": "SAR", "category": "Transportation", "merchant": "Uber", "transaction_datetime": "2026-01-03T00:00:00", "direction": "out", "payment_hint": null, "notes": null},
-  {"amount": 30, "currency": "SAR", "category": "Food & Dining", "merchant": "Starbucks", "transaction_datetime": "2026-01-03T00:00:00", "direction": "out", "payment_hint": null, "notes": null}
+  {"amount": 45, "currency": "SAR", "category": "Transportation", "merchant": "Uber", "transaction_datetime": "2026-01-03T00:00:00", "direction": "out", "payment_hint": null, "notes": null, "description": null},
+  {"amount": 30, "currency": "SAR", "category": "Food & Dining", "merchant": "Starbucks", "transaction_datetime": "2026-01-03T00:00:00", "direction": "out", "payment_hint": null, "notes": null, "description": null}
 ]}
 
-Input: "[{\\"date\\": \\"2026-01-02T10:15:00\\", \\"amount\\": 150, \\"merchant\\": \\"Amazon\\"}]"
-Output: {"transactions": [{"amount": 150, "currency": "SAR", "category": "Shopping", "merchant": "Amazon", "transaction_datetime": "2026-01-02T10:15:00", "direction": "out", "payment_hint": null, "notes": null}]}
+Example 3 - Bank SMS with RICH DATA (CRITICAL):
+Input: "ADIB Transaction
+Transaction of AED 244.20 debited from your a/c *552
+at TIKTOK ADS – AD S.TIKTOK.CO IE
+Time: Yesterday, 9:14 PM
+Available Balance: AED 67471.11
+For : Ajdel CFL03 Campaign"
+(If today is 2026-01-10)
+Output: {"transactions": [{"amount": 244.20, "currency": "AED", "category": "Advertising", "merchant": "TIKTOK ADS", "transaction_datetime": "2026-01-09T21:14:00", "direction": "out", "payment_hint": "*552", "notes": null, "description": "Available Balance: AED 67471.11 | For: Ajdel CFL03 Campaign | Account: *552"}]}
+
+Example 4 - Salary/Income:
+Input: "Salary received 8000 SAR on Jan 1st"
+Output: {"transactions": [{"amount": 8000, "currency": "SAR", "category": "Income", "merchant": "Salary", "transaction_datetime": "2026-01-01T00:00:00", "direction": "in", "payment_hint": null, "notes": null, "description": null}]}
 
 If you cannot parse ANY valid financial data, return:
 {"transactions": [], "error": "Could not parse transactions", "reason": "<brief explanation>"}`
@@ -119,11 +150,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           { role: 'system', content: SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `Current date/time: ${currentDateTime || new Date().toISOString()}\n\nParse these financial transactions:\n\n${text}`,
+            content: `Current date/time: ${currentDateTime || new Date().toISOString()}\n\nParse these financial transactions (there may be multiple):\n\n${text}`,
           },
         ],
         temperature: 0.1,
-        max_tokens: 2000,
+        max_tokens: 8000, // Increased for bulk processing (up to 50 transactions)
       }),
     })
 
@@ -180,4 +211,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 }
-

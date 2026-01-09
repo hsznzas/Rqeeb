@@ -29,7 +29,10 @@ import {
   BarChart3,
   LogOut,
   X,
-  ChevronRight
+  ChevronRight,
+  CheckCircle2,
+  XCircle,
+  FileText
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
@@ -604,7 +607,8 @@ function InputDock({
     setFeedback(null)
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`
+      // Increased max height for bulk paste (up to 50 transactions)
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 300)}px`
     }
   }, [])
 
@@ -627,12 +631,12 @@ function InputDock({
   // Get placeholder text based on toolbar state
   const getPlaceholder = () => {
     if (selectedCard) {
-      return `Type transaction... (${selectedCard.name} ****${selectedCard.last_4_digits})`
+      return `Type or paste transactions... (${selectedCard.name} ****${selectedCard.last_4_digits})`
     }
     if (selectedAccount) {
-      return `Type transaction... (${selectedAccount.name})`
+      return `Type or paste transactions... (${selectedAccount.name})`
     }
-    return "Type or paste transaction..."
+    return "Type or paste transactions (supports bulk paste)..."
   }
 
   return (
@@ -684,7 +688,7 @@ function InputDock({
             'focus-within:border-emerald-500/30 focus-within:bg-white/[0.07]',
             'transition-all duration-200'
           )}>
-            {/* Text Input */}
+            {/* Text Input - Supports bulk paste (up to 50 transactions) */}
             <textarea
               ref={textareaRef}
               value={input}
@@ -695,8 +699,8 @@ function InputDock({
               disabled={isSubmitting}
               className={cn(
                 'flex-1 bg-transparent border-none resize-none',
-                'text-white placeholder:text-slate-500',
-                'py-3 px-2 max-h-[120px]',
+                'text-base text-white placeholder:text-slate-500', // text-base prevents iOS zoom
+                'py-3 px-2 max-h-[300px]', // Increased for bulk paste
                 'focus:outline-none',
                 'disabled:opacity-50'
               )}
@@ -725,7 +729,7 @@ function InputDock({
           </div>
 
           <p className="text-center text-xs text-slate-600 mt-2">
-            Press <kbd className="px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-500">Enter</kbd> to send
+            Press <kbd className="px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-500">Enter</kbd> to send • Bulk paste up to 50 transactions
           </p>
         </div>
       </div>
@@ -746,9 +750,9 @@ function EmptyState() {
       </div>
       <h3 className="text-xl font-semibold text-white mb-2">Your Financial Feed</h3>
       <p className="text-slate-400 text-center max-w-sm mb-4">
-        Start by typing a transaction, pasting a bank SMS, or describing your spending.
+        Start by typing a transaction, pasting bank SMS messages, or describing your spending.
       </p>
-      <div className="flex flex-wrap gap-2 justify-center">
+      <div className="flex flex-wrap gap-2 justify-center mb-4">
         {['Coffee 25 SAR', 'Uber 45 on Visa 8844', 'Salary 8000'].map((example) => (
           <span 
             key={example}
@@ -758,6 +762,122 @@ function EmptyState() {
           </span>
         ))}
       </div>
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <FileText className="h-3.5 w-3.5" />
+        <span>Supports bulk paste – up to 50 transactions at once</span>
+      </div>
+    </motion.div>
+  )
+}
+
+// Batch Processing Progress Modal
+interface BatchProgress {
+  total: number
+  processed: number
+  succeeded: number
+  failed: number
+  isComplete: boolean
+}
+
+function BatchProgressModal({
+  isOpen,
+  progress,
+  onClose
+}: {
+  isOpen: boolean
+  progress: BatchProgress
+  onClose: () => void
+}) {
+  if (!isOpen) return null
+
+  const percentage = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="w-full max-w-sm"
+      >
+        <div className="backdrop-blur-xl bg-white/[0.08] border border-white/10 rounded-3xl p-6 shadow-2xl">
+          {/* Header */}
+          <div className="flex items-center gap-3 mb-6">
+            {progress.isComplete ? (
+              <div className="p-3 rounded-xl bg-emerald-500/20">
+                <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+              </div>
+            ) : (
+              <div className="p-3 rounded-xl bg-blue-500/20">
+                <Loader2 className="h-6 w-6 text-blue-400 animate-spin" />
+              </div>
+            )}
+            <div>
+              <h3 className="text-lg font-semibold text-white">
+                {progress.isComplete ? 'Batch Complete!' : 'Processing Batch...'}
+              </h3>
+              <p className="text-sm text-slate-400">
+                {progress.isComplete 
+                  ? `${progress.succeeded} transaction${progress.succeeded !== 1 ? 's' : ''} added`
+                  : `${progress.processed} of ${progress.total}`}
+              </p>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="mb-6">
+            <div className="h-2 bg-white/[0.05] rounded-full overflow-hidden">
+              <motion.div 
+                className="h-full bg-emerald-500 rounded-full"
+                initial={{ width: 0 }}
+                animate={{ width: `${percentage}%` }}
+                transition={{ duration: 0.3 }}
+              />
+            </div>
+            <div className="flex justify-between mt-2 text-xs text-slate-500">
+              <span>{percentage}% complete</span>
+              <span>{progress.total} total</span>
+            </div>
+          </div>
+
+          {/* Results Summary */}
+          {progress.isComplete && (
+            <div className="space-y-2 mb-6">
+              {progress.succeeded > 0 && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <span className="text-emerald-400 text-sm font-medium">
+                    {progress.succeeded} Processed Successfully
+                  </span>
+                </div>
+              )}
+              {progress.failed > 0 && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                  <XCircle className="h-4 w-4 text-rose-400" />
+                  <span className="text-rose-400 text-sm font-medium">
+                    {progress.failed} Failed / Needs Review
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Close Button */}
+          {progress.isComplete && (
+            <button
+              onClick={onClose}
+              className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-medium transition-colors"
+            >
+              Done
+            </button>
+          )}
+        </div>
+      </motion.div>
     </motion.div>
   )
 }
@@ -796,6 +916,16 @@ export function HomePage() {
   const [showDetailModal, setShowDetailModal] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<UITransaction | null>(null)
   const [transactionAttachments, setTransactionAttachments] = useState<TransactionAttachment[]>([])
+  
+  // Batch processing state
+  const [showBatchProgress, setShowBatchProgress] = useState(false)
+  const [batchProgress, setBatchProgress] = useState<BatchProgress>({
+    total: 0,
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    isComplete: false
+  })
 
   // Get default account
   const defaultAccount = accounts.find(a => a.is_default)
@@ -937,6 +1067,7 @@ export function HomePage() {
           original_currency: originalCurrency,
           conversion_rate: conversionRate,
           notes: parsed.notes,
+          description: parsed.description, // Rich data: balance, refs, campaign info
           is_reimbursable: extraFields?.isReimbursable || false,
           beneficiary_id: extraFields?.beneficiaryId || null,
         } as never)
@@ -1093,6 +1224,22 @@ export function HomePage() {
 
       // Track transactions that need clarification
       const needsClarification: { parsed: ParsedTransaction; tempId: string }[] = []
+      
+      // Initialize batch progress for bulk operations (3+ transactions)
+      const isBulkOperation = parsedTransactions.length >= 3
+      let successCount = 0
+      let failCount = 0
+      
+      if (isBulkOperation) {
+        setBatchProgress({
+          total: parsedTransactions.length,
+          processed: 0,
+          succeeded: 0,
+          failed: 0,
+          isComplete: false
+        })
+        setShowBatchProgress(true)
+      }
 
       // Process each transaction
       for (let i = 0; i < parsedTransactions.length; i++) {
@@ -1117,7 +1264,7 @@ export function HomePage() {
           original_currency: null,
           conversion_rate: null,
           notes: parsed.notes,
-          description: null,
+          description: parsed.description, // Include rich data
           logo_url: null,
           beneficiary_id: toolbarState.beneficiaryId,
           is_reimbursable: toolbarState.isReimbursable,
@@ -1134,11 +1281,13 @@ export function HomePage() {
         if (processResult === 'conflict') {
           // Show conflict modal - stop processing further transactions
           setShowConflictModal(true)
+          if (isBulkOperation) setShowBatchProgress(false)
           setIsSubmitting(false)
           return
         } else if (processResult === 'needs_clarification') {
           // Needs manual account selection
           needsClarification.push({ parsed, tempId })
+          failCount++
           
           // Update the UI to show it's waiting for clarification
           setTransactions(prev =>
@@ -1147,7 +1296,30 @@ export function HomePage() {
               isProcessing: false,
             } : t)
           )
+        } else {
+          // Successfully saved
+          successCount++
         }
+        
+        // Update batch progress
+        if (isBulkOperation) {
+          setBatchProgress(prev => ({
+            ...prev,
+            processed: i + 1,
+            succeeded: successCount,
+            failed: failCount
+          }))
+        }
+      }
+
+      // Mark batch as complete
+      if (isBulkOperation) {
+        setBatchProgress(prev => ({
+          ...prev,
+          isComplete: true,
+          succeeded: successCount,
+          failed: needsClarification.length
+        }))
       }
 
       // If any transactions need clarification, show modal for the first one
@@ -1156,12 +1328,22 @@ export function HomePage() {
         setPendingParsedData(first.parsed)
         setPendingTempId(first.tempId)
         setPendingBulkTransactions(needsClarification.slice(1))
-        setShowClarification(true)
+        
+        // Close batch progress first, then show clarification
+        if (isBulkOperation) {
+          setTimeout(() => {
+            setShowBatchProgress(false)
+            setShowClarification(true)
+          }, 1500)
+        } else {
+          setShowClarification(true)
+        }
       }
 
     } catch (error) {
       console.error('Error processing transactions:', error)
       setTransactions(prev => prev.filter(t => t.id !== processingTempId))
+      setShowBatchProgress(false)
     } finally {
       setIsSubmitting(false)
     }
@@ -1585,6 +1767,17 @@ export function HomePage() {
             onUseText={handleConflictUseText}
             onKeepToolbar={handleConflictKeepToolbar}
             onCancel={handleConflictCancel}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Batch Progress Modal */}
+      <AnimatePresence>
+        {showBatchProgress && (
+          <BatchProgressModal
+            isOpen={showBatchProgress}
+            progress={batchProgress}
+            onClose={() => setShowBatchProgress(false)}
           />
         )}
       </AnimatePresence>
