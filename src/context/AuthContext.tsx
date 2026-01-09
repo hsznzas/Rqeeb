@@ -47,10 +47,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: false,
   })
   
-  // Track if initial auth check is done
+  // Track initialization and mount status
   const initializedRef = useRef(false)
+  const mountedRef = useRef(true)
 
-  // Fetch user profile (non-blocking)
+  // Safe setState that checks if component is still mounted
+  const safeSetState = useCallback((newState: AuthState | ((prev: AuthState) => AuthState)) => {
+    if (mountedRef.current) {
+      setState(newState)
+    }
+  }, [])
+
+  // Fetch user profile (non-blocking, with error handling)
   const fetchProfile = useCallback(async (userId: string): Promise<Profile | null> => {
     try {
       const { data, error } = await supabase
@@ -60,52 +68,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single()
 
       if (error) {
-        // Profile might not exist yet or missing columns - that's okay
         console.warn('Profile fetch warning:', error.message)
         return null
       }
 
       return data as Profile
     } catch (error) {
-      // Network error - don't block auth
       console.warn('Profile fetch failed:', error)
       return null
     }
   }, [])
 
-  // Initialize auth state - runs once on mount
+  // Initialize auth state - runs ONCE on mount
   useEffect(() => {
-    if (initializedRef.current) return
+    // Prevent double initialization (React StrictMode)
+    if (initializedRef.current) {
+      return
+    }
     initializedRef.current = true
+    mountedRef.current = true
 
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    console.log('[Auth] Initializing...')
 
     const initAuth = async () => {
-      // Safety timeout - if auth doesn't resolve in 10 seconds, stop loading
-      // This prevents infinite spinner on network issues or cold starts
-      timeoutId = setTimeout(() => {
-        console.warn('Auth initialization timed out after 10s')
-        setState({
-          user: null,
-          session: null,
-          profile: null,
-          isLoading: false,
-          isAuthenticated: false,
-        })
-      }, 10000)
-
       try {
+        // Get current session
         const { data: { session }, error } = await supabase.auth.getSession()
         
-        // Clear timeout since we got a response
-        if (timeoutId) {
-          clearTimeout(timeoutId)
-          timeoutId = null
-        }
+        if (!mountedRef.current) return // Component unmounted
         
         if (error) {
-          console.error('Auth initialization error:', error)
-          setState({
+          console.error('[Auth] Session error:', error.message)
+          safeSetState({
             user: null,
             session: null,
             profile: null,
@@ -116,24 +110,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         if (session?.user) {
-          // User is logged in - set authenticated immediately, fetch profile in background
-          setState({
+          console.log('[Auth] Session found, user:', session.user.email)
+          
+          // Set authenticated immediately (don't wait for profile)
+          safeSetState({
             user: session.user,
             session: session,
-            profile: null, // Profile loads in background
+            profile: null,
             isLoading: false,
             isAuthenticated: true,
           })
           
-          // Fetch profile in background (non-blocking)
+          // Fetch profile in background
           fetchProfile(session.user.id).then(profile => {
-            if (profile) {
+            if (mountedRef.current && profile) {
               setState(prev => ({ ...prev, profile }))
             }
           })
         } else {
-          // No session
-          setState({
+          console.log('[Auth] No session found')
+          safeSetState({
             user: null,
             session: null,
             profile: null,
@@ -142,13 +138,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           })
         }
       } catch (error) {
-        // Clear timeout on error
-        if (timeoutId) {
-          clearTimeout(timeoutId)
-          timeoutId = null
-        }
-        console.error('Auth initialization error:', error)
-        setState({
+        console.error('[Auth] Init error:', error)
+        safeSetState({
           user: null,
           session: null,
           profile: null,
@@ -160,54 +151,85 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initAuth()
 
-    // Listen for auth changes (sign in, sign out, token refresh)
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Auth event:', event)
+        console.log('[Auth] Event:', event, session?.user?.email || 'no user')
         
-        // Only handle actual auth state changes, not token refreshes
-        if (event === 'SIGNED_IN') {
-          if (session?.user) {
-            const profile = await fetchProfile(session.user.id)
-            setState({
-              user: session.user,
-              session: session,
-              profile,
+        if (!mountedRef.current) return
+        
+        // Handle specific events only
+        switch (event) {
+          case 'SIGNED_IN':
+            if (session?.user) {
+              safeSetState({
+                user: session.user,
+                session: session,
+                profile: null,
+                isLoading: false,
+                isAuthenticated: true,
+              })
+              // Fetch profile in background
+              fetchProfile(session.user.id).then(profile => {
+                if (mountedRef.current && profile) {
+                  setState(prev => ({ ...prev, profile }))
+                }
+              })
+            }
+            break
+            
+          case 'SIGNED_OUT':
+            safeSetState({
+              user: null,
+              session: null,
+              profile: null,
               isLoading: false,
-              isAuthenticated: true,
+              isAuthenticated: false,
             })
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setState({
-            user: null,
-            session: null,
-            profile: null,
-            isLoading: false,
-            isAuthenticated: false,
-          })
-        } else if (event === 'TOKEN_REFRESHED' && session) {
-          // Just update session, don't refetch profile or change loading state
-          setState(prev => ({
-            ...prev,
-            session: session,
-            user: session.user,
-          }))
+            break
+            
+          case 'TOKEN_REFRESHED':
+            // Only update session, keep everything else
+            if (session) {
+              setState(prev => ({
+                ...prev,
+                session: session,
+                user: session.user,
+              }))
+            }
+            break
+            
+          case 'INITIAL_SESSION':
+            // Ignore - we handle this in initAuth
+            break
+            
+          case 'USER_UPDATED':
+            // Update user object
+            if (session?.user) {
+              setState(prev => ({
+                ...prev,
+                user: session.user,
+              }))
+            }
+            break
+            
+          default:
+            // Ignore unknown events
+            console.log('[Auth] Unhandled event:', event)
         }
-        // Ignore INITIAL_SESSION - we handle that in initAuth
       }
     )
 
     return () => {
+      console.log('[Auth] Cleanup')
+      mountedRef.current = false
       subscription.unsubscribe()
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-      }
     }
-  }, [fetchProfile])
+  }, [fetchProfile, safeSetState])
 
   // Sign in with email/password
   const signIn = useCallback(async (email: string, password: string) => {
-    setState(prev => ({ ...prev, isLoading: true }))
+    console.log('[Auth] Signing in:', email)
     
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -215,16 +237,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
 
     if (error) {
-      setState(prev => ({ ...prev, isLoading: false }))
+      console.error('[Auth] Sign in error:', error.message)
     }
-    // If successful, onAuthStateChange will handle the state update
+    // onAuthStateChange will handle state update on success
 
     return { error }
   }, [])
 
   // Sign up with email/password
   const signUp = useCallback(async (email: string, password: string) => {
-    setState(prev => ({ ...prev, isLoading: true }))
+    console.log('[Auth] Signing up:', email)
 
     const { error } = await supabase.auth.signUp({
       email,
@@ -235,7 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
 
     if (error) {
-      setState(prev => ({ ...prev, isLoading: false }))
+      console.error('[Auth] Sign up error:', error.message)
     }
 
     return { error }
@@ -243,14 +265,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Sign out
   const signOut = useCallback(async () => {
-    setState(prev => ({ ...prev, isLoading: true }))
-    await supabase.auth.signOut()
-    // onAuthStateChange will handle the state update
-  }, [])
+    console.log('[Auth] Signing out')
+    
+    // Clear state immediately for instant UI feedback
+    safeSetState({
+      user: null,
+      session: null,
+      profile: null,
+      isLoading: false,
+      isAuthenticated: false,
+    })
+    
+    // Then tell Supabase (don't await - fire and forget)
+    supabase.auth.signOut().catch(err => {
+      console.error('[Auth] Sign out error:', err)
+    })
+  }, [safeSetState])
 
   // Sign in with demo account
   const signInWithDemo = useCallback(async () => {
-    console.log('Demo mode activated')
+    console.log('[Auth] Demo login')
     return signIn(DEMO_EMAIL, DEMO_PASSWORD)
   }, [signIn])
 
@@ -259,7 +293,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!state.user) return
     
     const profile = await fetchProfile(state.user.id)
-    setState(prev => ({ ...prev, profile }))
+    if (mountedRef.current) {
+      setState(prev => ({ ...prev, profile }))
+    }
   }, [state.user, fetchProfile])
 
   // Update user profile
@@ -279,10 +315,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       // Update local state immediately
-      setState(prev => ({
-        ...prev,
-        profile: prev.profile ? { ...prev.profile, ...updates } : null
-      }))
+      if (mountedRef.current) {
+        setState(prev => ({
+          ...prev,
+          profile: prev.profile ? { ...prev.profile, ...updates } : null
+        }))
+      }
 
       return { error: null }
     } catch (error) {

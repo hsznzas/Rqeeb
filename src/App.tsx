@@ -1,4 +1,10 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+
+// React Router v7 future flags to silence deprecation warnings
+const routerFutureConfig = {
+  v7_startTransition: true,
+  v7_relativeSplatPath: true,
+}
 import { AnimatePresence } from 'framer-motion'
 import { AuthProvider, DataProvider } from '@/context'
 import { ProtectedRoute, PublicRoute } from '@/components/auth'
@@ -95,7 +101,7 @@ function AppRoutes() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter future={routerFutureConfig}>
       <AuthProvider>
         <DataProvider>
           <AppRoutes />
