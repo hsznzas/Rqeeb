@@ -5,7 +5,6 @@ import {
   Loader2, 
   TrendingUp, 
   TrendingDown,
-  Wallet,
   RefreshCw,
   AlertCircle,
   Sparkles,
