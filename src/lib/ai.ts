@@ -78,10 +78,21 @@ function normalizeDateTime(dateInput: string | null | undefined, fallback: strin
 }
 
 /**
+ * Custom category with description for AI parsing
+ */
+export interface CustomCategory {
+  name: string
+  description: string | null
+}
+
+/**
  * Parse transactions from text using secure backend API
  * Always returns an array of transactions with proper ISO 8601 dates
  */
-export async function parseTransactions(text: string): Promise<BulkParseResult> {
+export async function parseTransactions(
+  text: string,
+  customCategories?: CustomCategory[]
+): Promise<BulkParseResult> {
   const currentDateTime = getCurrentISODateTime()
   const fallbackDateTime = currentDateTime.slice(0, 19)
 
@@ -95,6 +106,7 @@ export async function parseTransactions(text: string): Promise<BulkParseResult> 
       body: JSON.stringify({
         text,
         currentDateTime,
+        customCategories: customCategories || [],
       }),
     })
 

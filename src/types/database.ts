@@ -321,6 +321,41 @@ export interface Database {
           created_at?: string
         }
       }
+      user_categories: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          description: string | null
+          icon: string
+          color: string
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          name: string
+          description?: string | null
+          icon?: string
+          color?: string
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          description?: string | null
+          icon?: string
+          color?: string
+          is_active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -342,6 +377,7 @@ export type Subscription = Database['public']['Tables']['subscriptions']['Row']
 export type RawLog = Database['public']['Tables']['raw_logs']['Row']
 export type Transaction = Database['public']['Tables']['transactions']['Row']
 export type Beneficiary = Database['public']['Tables']['beneficiaries']['Row']
+export type UserCategory = Database['public']['Tables']['user_categories']['Row']
 
 export type NewAccount = Database['public']['Tables']['accounts']['Insert']
 export type NewAccountCard = Database['public']['Tables']['account_cards']['Insert']
@@ -361,6 +397,7 @@ export interface TransactionAttachment {
 export type NewRawLog = Database['public']['Tables']['raw_logs']['Insert']
 export type NewTransaction = Database['public']['Tables']['transactions']['Insert']
 export type NewBeneficiary = Database['public']['Tables']['beneficiaries']['Insert']
+export type NewUserCategory = Database['public']['Tables']['user_categories']['Insert']
 
 // Account with linked cards (for UI display)
 export interface AccountWithCards extends Account {

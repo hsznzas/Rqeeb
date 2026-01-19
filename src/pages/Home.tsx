@@ -32,18 +32,22 @@ import {
   ChevronRight,
   CheckCircle2,
   XCircle,
-  FileText
+  FileText,
+  Maximize2,
+  Minimize2,
+  Eye,
+  EyeOff
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { formatFeedDate } from '@/lib/dateUtils'
 import { useAuth } from '@/context'
 import { supabase } from '@/services/supabase'
-import { parseTransactions, isBulkParseError, matchPaymentHint, type ParsedTransaction, type BulkParseResult } from '@/lib/ai'
+import { parseTransactions, isBulkParseError, matchPaymentHint, type ParsedTransaction, type BulkParseResult, type CustomCategory } from '@/lib/ai'
 import { convertAmount, type Currency, formatCurrencyWithSymbol } from '@/lib/currency'
 import { generateId } from '@/lib/utils'
 import { toISODateString } from '@/lib/dateUtils'
-import type { Account, AccountCard, Transaction, Beneficiary, NewSubscription, TransactionAttachment } from '@/types/database'
+import type { Account, AccountCard, Transaction, Beneficiary, NewSubscription, TransactionAttachment, UserCategory } from '@/types/database'
 import { 
   TransactionDetailModal, 
   TransactionInputToolbar, 
@@ -186,6 +190,18 @@ const TransactionCard = forwardRef<HTMLDivElement, TransactionCardProps>(
               <h3 className="font-medium text-white truncate">
                 {transaction.merchant || transaction.category}
               </h3>
+              {/* Account/card info on same line as title */}
+              {account && !isProcessing && (
+                <span className="text-sm text-slate-500 truncate flex items-center gap-1">
+                  <span>•</span>
+                  {account.name}
+                  {card && (
+                    <span className="text-slate-600">
+                      ****{card.last_4_digits}
+                    </span>
+                  )}
+                </span>
+              )}
               {isProcessing && (
                 <span className="text-xs text-blue-400 flex items-center gap-1">
                   <Sparkles className="h-3 w-3" />
@@ -195,20 +211,6 @@ const TransactionCard = forwardRef<HTMLDivElement, TransactionCardProps>(
             </div>
             <div className="flex items-center gap-2 text-sm text-slate-500">
               <span>{transaction.category}</span>
-              {/* Show account/card info */}
-              {account && (
-                <>
-                  <span>•</span>
-                  <span className="truncate flex items-center gap-1">
-                    {account.name}
-                    {card && (
-                      <span className="text-slate-600">
-                        ****{card.last_4_digits}
-                      </span>
-                    )}
-                  </span>
-                </>
-              )}
               <span>•</span>
               <span>{formatFeedDate(transaction.transaction_time || transaction.created_at)}</span>
             </div>
@@ -462,18 +464,53 @@ function AccountSelectionModal({
   )
 }
 
+// Category list for filtering
+const CATEGORIES = [
+  'Food & Dining',
+  'Transportation', 
+  'Shopping',
+  'Bills & Utilities',
+  'Groceries',
+  'Health',
+  'Transfer',
+  'Entertainment',
+  'Income',
+  'Travel',
+  'Education',
+  'Advertising',
+  'Subscription',
+  'Other'
+]
+
 // Summary Header Component
 function SummaryHeader({ 
   accounts, 
   summary,
-  displayCurrency
+  displayCurrency,
+  categoryFilter,
+  onCategoryFilterChange,
+  customCategories
 }: { 
   accounts: Account[]
   summary: { income: number; expenses: number; net: number; count: number }
   displayCurrency: Currency
+  categoryFilter: string | null
+  onCategoryFilterChange: (category: string | null) => void
+  customCategories: UserCategory[]
 }) {
   const { signOut } = useAuth()
   const defaultAccount = accounts.find(a => a.is_default)
+  
+  // Balance visibility state with localStorage persistence (default: hidden)
+  const [isBalanceHidden, setIsBalanceHidden] = useState(() => {
+    return localStorage.getItem('rqeeb_hide_balance') !== 'false'
+  })
+  
+  const toggleBalanceVisibility = () => {
+    const newValue = !isBalanceHidden
+    setIsBalanceHidden(newValue)
+    localStorage.setItem('rqeeb_hide_balance', String(newValue))
+  }
 
   return (
     <motion.div
@@ -485,16 +522,24 @@ function SummaryHeader({
         <div className="flex items-center justify-between">
           {/* Net Worth Section */}
           <div className="flex items-center gap-4">
-            <div className="p-2.5 rounded-xl bg-white/[0.05]">
-              <Wallet className="h-5 w-5 text-slate-300" />
-            </div>
+            <button
+              onClick={toggleBalanceVisibility}
+              className="p-2.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.08] transition-colors"
+              title={isBalanceHidden ? 'Show balance' : 'Hide balance'}
+            >
+              {isBalanceHidden ? (
+                <EyeOff className="h-5 w-5 text-slate-400" />
+              ) : (
+                <Eye className="h-5 w-5 text-slate-300" />
+              )}
+            </button>
             <div>
               <p className="text-xs text-slate-500 uppercase tracking-wider">Net Balance</p>
               <div className={cn(
                 'text-2xl font-bold font-mono',
                 summary.net >= 0 ? 'text-emerald-400' : 'text-rose-400'
               )}>
-                {summary.net >= 0 ? '+' : ''}{formatCurrency(summary.net, displayCurrency)}
+                {isBalanceHidden ? '•••••' : `${summary.net >= 0 ? '+' : ''}${formatCurrency(summary.net, displayCurrency)}`}
               </div>
             </div>
           </div>
@@ -504,11 +549,11 @@ function SummaryHeader({
             <div className="text-right mr-2">
               <div className="flex items-center gap-1 text-emerald-400">
                 <TrendingUp className="h-3 w-3" />
-                <span className="text-xs font-medium">{formatCurrency(summary.income, displayCurrency)}</span>
+                <span className="text-xs font-medium">{isBalanceHidden ? '•••••' : formatCurrency(summary.income, displayCurrency)}</span>
               </div>
               <div className="flex items-center gap-1 text-rose-400">
                 <TrendingDown className="h-3 w-3" />
-                <span className="text-xs font-medium">{formatCurrency(summary.expenses, displayCurrency)}</span>
+                <span className="text-xs font-medium">{isBalanceHidden ? '•••••' : formatCurrency(summary.expenses, displayCurrency)}</span>
               </div>
             </div>
 
@@ -569,6 +614,57 @@ function SummaryHeader({
             </div>
           </div>
         )}
+
+        {/* Category Filter */}
+        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            <button
+              onClick={() => onCategoryFilterChange(null)}
+              className={cn(
+                'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all',
+                categoryFilter === null
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-white/[0.05] text-slate-400 border border-white/[0.06] hover:bg-white/[0.08]'
+              )}
+            >
+              All
+            </button>
+            {/* Default categories */}
+            {CATEGORIES.map((category) => (
+              <button
+                key={category}
+                onClick={() => onCategoryFilterChange(categoryFilter === category ? null : category)}
+                className={cn(
+                  'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap',
+                  categoryFilter === category
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-white/[0.05] text-slate-400 border border-white/[0.06] hover:bg-white/[0.08]'
+                )}
+              >
+                {category}
+              </button>
+            ))}
+            {/* Custom categories */}
+            {customCategories.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => onCategoryFilterChange(categoryFilter === cat.name ? null : cat.name)}
+                className={cn(
+                  'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap flex items-center gap-1.5',
+                  categoryFilter === cat.name
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-white/[0.05] text-slate-400 border border-white/[0.06] hover:bg-white/[0.08]'
+                )}
+              >
+                <div 
+                  className="w-2 h-2 rounded-full" 
+                  style={{ backgroundColor: cat.color }}
+                />
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
     </motion.div>
   )
@@ -591,11 +687,12 @@ function InputDock({
   toolbarState: ToolbarState
   onToolbarChange: (state: ToolbarState) => void
   onAddBeneficiary: (name: string) => Promise<Beneficiary | null>
-  onSubmit: (text: string) => void
+  onSubmit: (text: string) => Promise<{ success: boolean; error?: string }>
   isSubmitting: boolean
 }) {
   const [input, setInput] = useState('')
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
+  const [isExpanded, setIsExpanded] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Get selected account for display
@@ -605,19 +702,30 @@ function InputDock({
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
     setFeedback(null)
-    if (textareaRef.current) {
+    if (textareaRef.current && !isExpanded) {
       textareaRef.current.style.height = 'auto'
       // Increased max height for bulk paste (up to 50 transactions)
       textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 300)}px`
     }
-  }, [])
+  }, [isExpanded])
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     if (!input.trim() || isSubmitting) return
-    onSubmit(input.trim())
-    setInput('')
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
+    
+    const result = await onSubmit(input.trim())
+    
+    if (result.success) {
+      setInput('')
+      setFeedback({ type: 'success', message: 'Transaction(s) added!' })
+      setIsExpanded(false)
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+      }
+      // Auto-hide success message after 2 seconds
+      setTimeout(() => setFeedback(null), 2000)
+    } else {
+      // Keep the input text on failure so user can retry
+      setFeedback({ type: 'error', message: result.error || 'Failed to process transaction' })
     }
   }, [input, isSubmitting, onSubmit])
 
@@ -695,16 +803,37 @@ function InputDock({
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               placeholder={getPlaceholder()}
-              rows={1}
+              rows={isExpanded ? 8 : 1}
               disabled={isSubmitting}
               className={cn(
                 'flex-1 bg-transparent border-none resize-none',
                 'text-base text-white placeholder:text-slate-500', // text-base prevents iOS zoom
-                'py-3 px-2 max-h-[300px]', // Increased for bulk paste
+                'py-3 px-2',
+                isExpanded ? 'min-h-[200px] max-h-[400px]' : 'max-h-[300px]', // Expanded or compact mode
                 'focus:outline-none',
                 'disabled:opacity-50'
               )}
             />
+
+            {/* Expand/Collapse Button */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setIsExpanded(!isExpanded)}
+              className={cn(
+                'shrink-0 p-3 rounded-xl',
+                'bg-white/[0.05] hover:bg-white/[0.10]',
+                'text-slate-400 hover:text-white',
+                'transition-all duration-200'
+              )}
+              title={isExpanded ? 'Collapse input' : 'Expand input for bulk paste'}
+            >
+              {isExpanded ? (
+                <Minimize2 className="h-5 w-5" />
+              ) : (
+                <Maximize2 className="h-5 w-5" />
+              )}
+            </motion.button>
 
             {/* Send Button */}
             <motion.button
@@ -892,6 +1021,7 @@ export function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [cards, setCards] = useState<AccountCard[]>([])
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([])
+  const [customCategories, setCustomCategories] = useState<UserCategory[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   
@@ -926,6 +1056,9 @@ export function HomePage() {
     failed: 0,
     isComplete: false
   })
+  
+  // Category filter state
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
 
   // Get default account
   const defaultAccount = accounts.find(a => a.is_default)
@@ -944,7 +1077,7 @@ export function HomePage() {
     if (!user) return
 
     try {
-      const [txRes, accRes, cardRes, benRes] = await Promise.all([
+      const [txRes, accRes, cardRes, benRes, catRes] = await Promise.all([
         supabase
           .from('transactions')
           .select('*')
@@ -961,13 +1094,20 @@ export function HomePage() {
         supabase
           .from('beneficiaries')
           .select('*')
+          .eq('user_id', user.id),
+        supabase
+          .from('user_categories')
+          .select('*')
           .eq('user_id', user.id)
+          .eq('is_active', true)
       ])
+
 
       if (txRes.error) throw txRes.error
       if (accRes.error) throw accRes.error
       if (cardRes.error) throw cardRes.error
       // Beneficiaries table might not exist yet, so don't throw on error
+      // user_categories table might not exist yet, so don't throw on error (H1 check)
       
       // Sort transactions by date/time (most recent first)
       const sortedTransactions = (txRes.data as UITransaction[] || []).sort((a, b) => {
@@ -981,6 +1121,13 @@ export function HomePage() {
       setAccounts((accRes.data as Account[]) || [])
       setCards((cardRes.data as AccountCard[]) || [])
       setBeneficiaries((benRes.data as Beneficiary[]) || [])
+      // Only set custom categories if the table exists (no error)
+      if (!catRes.error) {
+        setCustomCategories((catRes.data as UserCategory[]) || [])
+      } else {
+        // Table doesn't exist yet (404) - use empty array
+        setCustomCategories([])
+      }
       
       // Initialize toolbar with default account AND default card
       const loadedAccounts = (accRes.data as Account[]) || []
@@ -1100,14 +1247,13 @@ export function HomePage() {
     currency: toolbarState.currency
   }), [toolbarState])
 
-  // Process a single parsed transaction with toolbar-first logic and conflict detection
+  // Process a single parsed transaction with smart account/card matching
+  // When lockAccountCard is ON: force toolbar selection for all transactions
+  // When lockAccountCard is OFF: prefer AI hints, fall back to toolbar/default
   const processParsedTransaction = useCallback(async (
     parsed: ParsedTransaction,
     tempId: string
   ): Promise<'saved' | 'conflict' | 'needs_clarification'> => {
-    // Check if AI detected a payment hint
-    const aiMatch = matchPaymentHint(parsed.payment_hint, accounts, cards)
-    
     // Check if toolbar has a selection
     const hasToolbarSelection = toolbarState.accountId || toolbarState.cardId
     
@@ -1115,8 +1261,27 @@ export function HomePage() {
     const toolbarAccountId = toolbarState.cardId 
       ? cards.find(c => c.id === toolbarState.cardId)?.account_id 
       : toolbarState.accountId
+
+    // === LOCK MODE: Force toolbar selection, skip AI matching ===
+    if (toolbarState.lockAccountCard) {
+      // When locked, always use toolbar selection regardless of AI hints
+      const finalAccountId = toolbarState.accountId
+      const finalCardId = toolbarState.cardId
+      
+      // If locked but no account selected, need clarification
+      if (!finalAccountId && accounts.length > 0) {
+        return 'needs_clarification'
+      }
+      
+      await saveTransaction(parsed, finalAccountId, finalCardId, tempId, getExtraFields())
+      return 'saved'
+    }
     
-    // SMART CONFLICT DETECTION
+    // === UNLOCK MODE: AI-first matching with conflict detection ===
+    // Check if AI detected a payment hint
+    const aiMatch = matchPaymentHint(parsed.payment_hint, accounts, cards)
+    
+    // SMART CONFLICT DETECTION (only when unlocked)
     // Only show conflict modal if ALL conditions are met:
     // 1. AI found a payment hint AND matched it to an account/card
     // 2. Toolbar HAS an explicit selection
@@ -1146,22 +1311,23 @@ export function HomePage() {
     }
     
     // No conflict - determine which account/card to use
+    // Priority when unlocked: AI match > toolbar selection > default account
     let finalAccountId: string | null = null
     let finalCardId: string | null = null
     
-    if (hasToolbarSelection) {
-      // Toolbar has a selection - use it (toolbar takes priority)
-      finalAccountId = toolbarState.accountId
-      finalCardId = toolbarState.cardId
-    } else if (aiMatch.accountId) {
-      // AI found a match - use it
+    if (aiMatch.accountId) {
+      // AI found a match from payment hint - use it (AI-first when unlocked)
       finalAccountId = aiMatch.accountId
       finalCardId = aiMatch.cardId
+    } else if (hasToolbarSelection) {
+      // Fall back to toolbar selection
+      finalAccountId = toolbarState.accountId
+      finalCardId = toolbarState.cardId
     } else if (defaultAccount) {
-      // Use default account
+      // Fall back to default account
       finalAccountId = defaultAccount.id
     } else if (accounts.length > 0) {
-      // Need clarification
+      // No match found and no defaults - need clarification
       return 'needs_clarification'
     }
     
@@ -1171,12 +1337,14 @@ export function HomePage() {
   }, [accounts, cards, defaultAccount, toolbarState, saveTransaction, getExtraFields])
 
   // Handle text submission - supports bulk transactions with conflict detection
-  const handleSubmit = useCallback(async (text: string) => {
-    if (!user || isSubmitting) return
+  const handleSubmit = useCallback(async (text: string): Promise<{ success: boolean; error?: string }> => {
+    if (!user || isSubmitting) return { success: false, error: 'Not ready' }
 
     setIsSubmitting(true)
 
     // Create single processing entry while AI parses
+    // When locked: show toolbar account/card
+    // When unlocked: show null (AI will determine account)
     const processingTempId = generateId()
     const processingTx: UITransaction = {
       id: processingTempId,
@@ -1189,8 +1357,8 @@ export function HomePage() {
       transaction_date: toISODateString(new Date()),
       transaction_time: null,
       raw_log_id: null,
-      account_id: toolbarState.accountId,
-      card_id: toolbarState.cardId,
+      account_id: toolbarState.lockAccountCard ? toolbarState.accountId : null,
+      card_id: toolbarState.lockAccountCard ? toolbarState.cardId : null,
       original_amount: null,
       original_currency: null,
       conversion_rate: null,
@@ -1208,7 +1376,12 @@ export function HomePage() {
 
     try {
       // Parse with AI (now returns array)
-      const result: BulkParseResult = await parseTransactions(text)
+      // Pass custom categories to help AI categorize better
+      const customCats: CustomCategory[] = customCategories.map(c => ({
+        name: c.name,
+        description: c.description
+      }))
+      const result: BulkParseResult = await parseTransactions(text, customCats)
 
       // Remove the initial processing entry
       setTransactions(prev => prev.filter(t => t.id !== processingTempId))
@@ -1216,7 +1389,7 @@ export function HomePage() {
       if (isBulkParseError(result)) {
         console.error('Parse error:', result.error, result.reason)
         setIsSubmitting(false)
-        return
+        return { success: false, error: result.reason || result.error || 'Could not parse transaction' }
       }
 
       const { transactions: parsedTransactions } = result
@@ -1247,6 +1420,8 @@ export function HomePage() {
         const tempId = generateId()
 
         // Create optimistic entry for this transaction
+        // When locked: use toolbar account/card
+        // When unlocked: show null until AI matching completes
         const optimisticTx: UITransaction = {
           id: tempId,
           user_id: user.id,
@@ -1258,8 +1433,8 @@ export function HomePage() {
           transaction_date: parsed.transaction_datetime.split('T')[0],
           transaction_time: parsed.transaction_datetime,
           raw_log_id: null,
-          account_id: toolbarState.accountId,
-          card_id: toolbarState.cardId,
+          account_id: toolbarState.lockAccountCard ? toolbarState.accountId : null,
+          card_id: toolbarState.lockAccountCard ? toolbarState.cardId : null,
           original_amount: null,
           original_currency: null,
           conversion_rate: null,
@@ -1283,7 +1458,7 @@ export function HomePage() {
           setShowConflictModal(true)
           if (isBulkOperation) setShowBatchProgress(false)
           setIsSubmitting(false)
-          return
+          return { success: true } // Conflict modal will handle it
         } else if (processResult === 'needs_clarification') {
           // Needs manual account selection
           needsClarification.push({ parsed, tempId })
@@ -1340,10 +1515,13 @@ export function HomePage() {
         }
       }
 
+      return { success: true }
+
     } catch (error) {
       console.error('Error processing transactions:', error)
       setTransactions(prev => prev.filter(t => t.id !== processingTempId))
       setShowBatchProgress(false)
+      return { success: false, error: 'Something went wrong. Please try again.' }
     } finally {
       setIsSubmitting(false)
     }
@@ -1699,7 +1877,14 @@ export function HomePage() {
   return (
     <div className="min-h-[100dvh] bg-slate-950 flex flex-col">
       {/* Summary Header */}
-      <SummaryHeader accounts={accounts} summary={summary} displayCurrency={defaultCurrency} />
+      <SummaryHeader 
+        accounts={accounts} 
+        summary={summary} 
+        displayCurrency={defaultCurrency}
+        categoryFilter={categoryFilter}
+        onCategoryFilterChange={setCategoryFilter}
+        customCategories={customCategories}
+      />
 
       {/* Feed Area */}
       <div ref={feedRef} className="flex-1 overflow-y-auto pb-40">
@@ -1713,7 +1898,9 @@ export function HomePage() {
           ) : (
             <div className="space-y-3">
               <AnimatePresence mode="popLayout">
-                {transactions.map((transaction, index) => (
+                {transactions
+                  .filter(t => !categoryFilter || t.category === categoryFilter)
+                  .map((transaction, index) => (
                   <TransactionCard
                     key={transaction.id}
                     transaction={transaction}

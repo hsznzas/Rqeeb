@@ -16,30 +16,21 @@ export function parseISODate(dateString: string): Date {
 
 /**
  * Format date for display in the feed
- * - Today: "Today at 2:30 PM"
- * - Yesterday: "Yesterday at 2:30 PM"
- * - This week: "Monday at 2:30 PM"
- * - Older: "Jan 15 at 2:30 PM"
+ * - Within 7 days: "Sun 18 Jan at 2:30 PM" (short day name + date)
+ * - Older than 7 days: "18 Jan at 2:30 PM" (no day name)
  */
 export function formatFeedDate(date: Date | string): string {
   const d = typeof date === 'string' ? parseISO(date) : date
-  
-  if (isToday(d)) {
-    return `Today at ${format(d, 'h:mm a')}`
-  }
-  
-  if (isYesterday(d)) {
-    return `Yesterday at ${format(d, 'h:mm a')}`
-  }
-  
   const now = new Date()
   const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24))
   
   if (diffDays < 7) {
-    return format(d, "EEEE 'at' h:mm a")
+    // Within a week: "Sun 18 Jan at 12:00 AM"
+    return format(d, "EEE d MMM 'at' h:mm a")
   }
   
-  return format(d, "MMM d 'at' h:mm a")
+  // Older: "18 Jan at 12:00 AM"
+  return format(d, "d MMM 'at' h:mm a")
 }
 
 /**

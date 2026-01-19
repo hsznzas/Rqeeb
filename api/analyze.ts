@@ -1,15 +1,13 @@
 /**
  * Vercel Serverless Function: Transaction Analyzer
  * 
- * This function securely calls OpenAI from the server side,
+ * This function securely calls Google Gemini from the server side,
  * keeping the API key hidden from the browser.
  * 
  * Supports BULK processing of up to 50 transactions at once.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node'
-
-const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions'
 
 // System prompt for bulk financial parsing with RICH DATA extraction
 const SYSTEM_PROMPT = `You are a financial transaction parser for a Saudi Arabian personal finance app. Your job is to extract structured data from text messages (like bank SMS, receipts, or manual notes).
@@ -37,7 +35,8 @@ AMOUNT RULES:
 CATEGORIZATION:
 - Identify the merchant/source if mentioned
 - Look for payment method hints - any mention of card name, bank name, last 4 digits (like *552), or wallet type
-- Categorize into: Food & Dining, Transportation, Shopping, Bills & Utilities, Groceries, Health, Transfer, Entertainment, Income, Travel, Education, Advertising, Subscription, Other
+- Default categories: Food & Dining, Transportation, Shopping, Bills & Utilities, Groceries, Health, Transfer, Entertainment, Income, Travel, Education, Advertising, Subscription, Other
+- USER'S CUSTOM CATEGORIES will be provided below - ALWAYS prefer custom categories when they match!
 - Default currency to SAR if not specified. Recognize: SAR, USD, EUR, GBP, AED, ريال, $, €, £
 
 RICH DATA EXTRACTION (CRITICAL - DO NOT DISCARD):
@@ -116,18 +115,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Get API key from server environment (NOT exposed to browser)
-  const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+  const GOOGLE_AI_API_KEY = process.env.GOOGLE_AI_API_KEY
 
-  if (!OPENAI_API_KEY || !OPENAI_API_KEY.startsWith('sk-')) {
-    console.error('OpenAI API key not configured on server')
+  if (!GOOGLE_AI_API_KEY) {
+    console.error('Google AI API key not configured on server')
     return res.status(500).json({
       transactions: [],
       error: 'AI not configured',
-      reason: 'Server-side OpenAI API key is missing',
+      reason: 'Server-side GOOGLE_AI_API_KEY is missing',
     })
   }
 
-  const { text, currentDateTime } = req.body
+  const { text, currentDateTime, customCategories } = req.body
 
   if (!text || typeof text !== 'string') {
     return res.status(400).json({
@@ -137,39 +136,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     })
   }
 
+  // Build custom categories prompt section
+  let customCategoriesPrompt = ''
+  if (customCategories && Array.isArray(customCategories) && customCategories.length > 0) {
+    const categoryLines = customCategories
+      .filter((c: { name: string; description?: string | null }) => c.name)
+      .map((c: { name: string; description?: string | null }) => {
+        if (c.description) {
+          return `- "${c.name}": ${c.description}`
+        }
+        return `- "${c.name}"`
+      })
+      .join('\n')
+    
+    if (categoryLines) {
+      customCategoriesPrompt = `\n\nUSER'S CUSTOM CATEGORIES (prefer these when applicable):\n${categoryLines}`
+    }
+  }
+
   try {
-    const response = await fetch(OPENAI_API_URL, {
+    // Call Google Gemini API
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_AI_API_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Current date/time: ${currentDateTime || new Date().toISOString()}\n\nParse these financial transactions (there may be multiple):\n\n${text}`,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 8000, // Increased for bulk processing (up to 50 transactions)
+        contents: [{
+          parts: [{
+            text: `${SYSTEM_PROMPT}${customCategoriesPrompt}\n\nCurrent date/time: ${currentDateTime || new Date().toISOString()}\n\nParse these financial transactions (there may be multiple):\n\n${text}`
+          }]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 8000,
+        }
       }),
     })
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
-      console.error('OpenAI API error:', response.status, errorData)
+      console.error('Google Gemini API error:', response.status, errorData)
       return res.status(response.status).json({
         transactions: [],
         error: 'AI service error',
-        reason: errorData.error?.message || `HTTP ${response.status}`,
+        reason: (errorData as { error?: { message?: string } }).error?.message || `HTTP ${response.status}`,
       })
     }
 
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content
+    const data = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text
 
     if (!content) {
       return res.status(200).json({

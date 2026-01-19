@@ -18,7 +18,9 @@ import {
   User,
   Plus,
   X,
-  Star
+  Star,
+  Lock,
+  Unlock
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CURRENCIES, type Currency } from '@/lib/currency'
@@ -38,6 +40,7 @@ export interface ToolbarState {
   currency: Currency
   isReimbursable: boolean
   beneficiaryId: string | null
+  lockAccountCard: boolean  // When true, force toolbar account/card for all transactions in bulk paste
 }
 
 interface TransactionInputToolbarProps {
@@ -140,6 +143,14 @@ export function TransactionInputToolbar({
       ...value,
       isReimbursable: newIsReimbursable,
       beneficiaryId: newIsReimbursable ? value.beneficiaryId : null
+    })
+  }, [value, onChange])
+
+  // Handle lock account/card toggle
+  const handleLockToggle = useCallback(() => {
+    onChange({
+      ...value,
+      lockAccountCard: !value.lockAccountCard
     })
   }, [value, onChange])
 
@@ -370,6 +381,28 @@ export function TransactionInputToolbar({
         </AnimatePresence>
       </div>
 
+      {/* Lock Account/Card Toggle - Forces toolbar selection for bulk paste */}
+      <button
+        onClick={handleLockToggle}
+        title={value.lockAccountCard 
+          ? "Lock ON: All transactions use selected account/card" 
+          : "Lock OFF: AI will detect accounts from text"}
+        className={cn(
+          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm',
+          'border transition-colors',
+          value.lockAccountCard
+            ? 'bg-blue-500/20 border-blue-500/30 text-blue-400'
+            : 'bg-white/[0.05] border-white/[0.08] text-slate-500 hover:bg-white/[0.08]'
+        )}
+      >
+        {value.lockAccountCard ? (
+          <Lock className="h-3.5 w-3.5" />
+        ) : (
+          <Unlock className="h-3.5 w-3.5" />
+        )}
+        <span className="hidden sm:inline">Lock</span>
+      </button>
+
       {/* Divider */}
       <div className="w-px h-6 bg-white/[0.08]" />
 
@@ -503,6 +536,7 @@ export function getDefaultToolbarState(
     currency: defaultCurrency,
     isReimbursable: false,
     beneficiaryId: null,
+    lockAccountCard: false,  // Default OFF - let AI match accounts from text
   }
 }
 

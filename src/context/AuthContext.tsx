@@ -12,6 +12,13 @@ import type { User, Session, AuthError } from '@supabase/supabase-js'
 import type { Profile } from '@/types/database'
 import type { Currency } from '@/lib/currency'
 
+// Auth loading phases for debugging
+type LoadingPhase = 
+  | 'initializing'
+  | 'checking_session' 
+  | 'fetching_profile'
+  | 'ready'
+
 // Auth state interface
 interface AuthState {
   user: User | null
@@ -19,6 +26,7 @@ interface AuthState {
   profile: Profile | null
   isLoading: boolean
   isAuthenticated: boolean
+  loadingPhase: LoadingPhase
 }
 
 // Auth context interface
@@ -30,6 +38,7 @@ interface AuthContextType extends AuthState {
   updateProfile: (updates: Partial<Profile>) => Promise<{ error: Error | null }>
   refreshProfile: () => Promise<void>
   defaultCurrency: Currency
+  loadingPhaseText: string  // Human-readable loading status
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -45,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile: null,
     isLoading: true,
     isAuthenticated: false,
+    loadingPhase: 'initializing',
   })
   
   // Track initialization and mount status
@@ -89,10 +99,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     mountedRef.current = true
 
     console.log('[Auth] Initializing...')
+    
+    // Update phase to show we're checking session
+    safeSetState(prev => ({ ...prev, loadingPhase: 'checking_session' }))
 
     const initAuth = async () => {
       try {
         // Get current session
+        console.log('[Auth] Checking session with Supabase...')
         const { data: { session }, error } = await supabase.auth.getSession()
         
         if (!mountedRef.current) return // Component unmounted
@@ -105,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             profile: null,
             isLoading: false,
             isAuthenticated: false,
+            loadingPhase: 'ready',
           })
           return
         }
@@ -119,12 +134,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             profile: null,
             isLoading: false,
             isAuthenticated: true,
+            loadingPhase: 'fetching_profile',
           })
           
           // Fetch profile in background
           fetchProfile(session.user.id).then(profile => {
-            if (mountedRef.current && profile) {
-              setState(prev => ({ ...prev, profile }))
+            if (mountedRef.current) {
+              setState(prev => ({ ...prev, profile, loadingPhase: 'ready' }))
             }
           })
         } else {
@@ -135,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             profile: null,
             isLoading: false,
             isAuthenticated: false,
+            loadingPhase: 'ready',
           })
         }
       } catch (error) {
@@ -145,6 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           profile: null,
           isLoading: false,
           isAuthenticated: false,
+          loadingPhase: 'ready',
         })
       }
     }
@@ -168,11 +186,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 profile: null,
                 isLoading: false,
                 isAuthenticated: true,
+                loadingPhase: 'fetching_profile',
               })
               // Fetch profile in background
               fetchProfile(session.user.id).then(profile => {
-                if (mountedRef.current && profile) {
-                  setState(prev => ({ ...prev, profile }))
+                if (mountedRef.current) {
+                  setState(prev => ({ ...prev, profile, loadingPhase: 'ready' }))
                 }
               })
             }
@@ -185,6 +204,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               profile: null,
               isLoading: false,
               isAuthenticated: false,
+              loadingPhase: 'ready',
             })
             break
             
@@ -223,6 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       console.log('[Auth] Cleanup')
       mountedRef.current = false
+      initializedRef.current = false  // Reset for StrictMode re-mount
       subscription.unsubscribe()
     }
   }, [fetchProfile, safeSetState])
@@ -274,6 +295,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile: null,
       isLoading: false,
       isAuthenticated: false,
+      loadingPhase: 'ready',
     })
     
     // Then tell Supabase (don't await - fire and forget)
@@ -331,6 +353,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Get default currency from profile, fallback to SAR
   const defaultCurrency: Currency = (state.profile?.default_currency as Currency) || 'SAR'
 
+  // Human-readable loading phase text for debugging
+  const loadingPhaseText = {
+    initializing: 'Starting up...',
+    checking_session: 'Connecting to Supabase...',
+    fetching_profile: 'Loading your profile...',
+    ready: 'Ready',
+  }[state.loadingPhase]
+
   return (
     <AuthContext.Provider
       value={{
@@ -342,6 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         updateProfile,
         refreshProfile,
         defaultCurrency,
+        loadingPhaseText,
       }}
     >
       {children}
