@@ -230,6 +230,8 @@ export interface Database {
           user_id: string
           name: string
           color: string
+          relationship: string | null
+          default_currency: string
           created_at: string
           updated_at: string
         }
@@ -238,6 +240,8 @@ export interface Database {
           user_id: string
           name: string
           color?: string
+          relationship?: string | null
+          default_currency?: string
           created_at?: string
           updated_at?: string
         }
@@ -246,6 +250,8 @@ export interface Database {
           user_id?: string
           name?: string
           color?: string
+          relationship?: string | null
+          default_currency?: string
           created_at?: string
           updated_at?: string
         }
@@ -356,6 +362,126 @@ export interface Database {
           updated_at?: string
         }
       }
+      staging_transactions: {
+        Row: {
+          id: string
+          user_id: string
+          raw_text: string
+          extracted_data: Record<string, unknown>
+          status: 'pending' | 'approved' | 'rejected'
+          csv_source: string | null
+          potential_match_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          raw_text: string
+          extracted_data?: Record<string, unknown>
+          status?: 'pending' | 'approved' | 'rejected'
+          csv_source?: string | null
+          potential_match_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          raw_text?: string
+          extracted_data?: Record<string, unknown>
+          status?: 'pending' | 'approved' | 'rejected'
+          csv_source?: string | null
+          potential_match_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      category_rules: {
+        Row: {
+          id: string
+          user_id: string
+          merchant_keyword: string
+          category: string
+          confidence: number
+          times_applied: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          merchant_keyword: string
+          category: string
+          confidence?: number
+          times_applied?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          merchant_keyword?: string
+          category?: string
+          confidence?: number
+          times_applied?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      recurring_income: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          amount: number
+          currency: string
+          account_id: string | null
+          card_id: string | null
+          category: string
+          description: string | null
+          credit_day: number
+          is_active: boolean
+          next_credit_date: string | null
+          last_credit_date: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          name: string
+          amount: number
+          currency?: string
+          account_id?: string | null
+          card_id?: string | null
+          category?: string
+          description?: string | null
+          credit_day: number
+          is_active?: boolean
+          next_credit_date?: string | null
+          last_credit_date?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          amount?: number
+          currency?: string
+          account_id?: string | null
+          card_id?: string | null
+          category?: string
+          description?: string | null
+          credit_day?: number
+          is_active?: boolean
+          next_credit_date?: string | null
+          last_credit_date?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -378,6 +504,9 @@ export type RawLog = Database['public']['Tables']['raw_logs']['Row']
 export type Transaction = Database['public']['Tables']['transactions']['Row']
 export type Beneficiary = Database['public']['Tables']['beneficiaries']['Row']
 export type UserCategory = Database['public']['Tables']['user_categories']['Row']
+export type StagingTransaction = Database['public']['Tables']['staging_transactions']['Row']
+export type CategoryRule = Database['public']['Tables']['category_rules']['Row']
+export type RecurringIncome = Database['public']['Tables']['recurring_income']['Row']
 
 export type NewAccount = Database['public']['Tables']['accounts']['Insert']
 export type NewAccountCard = Database['public']['Tables']['account_cards']['Insert']
@@ -398,6 +527,9 @@ export type NewRawLog = Database['public']['Tables']['raw_logs']['Insert']
 export type NewTransaction = Database['public']['Tables']['transactions']['Insert']
 export type NewBeneficiary = Database['public']['Tables']['beneficiaries']['Insert']
 export type NewUserCategory = Database['public']['Tables']['user_categories']['Insert']
+export type NewStagingTransaction = Database['public']['Tables']['staging_transactions']['Insert']
+export type NewCategoryRule = Database['public']['Tables']['category_rules']['Insert']
+export type NewRecurringIncome = Database['public']['Tables']['recurring_income']['Insert']
 
 // Account with linked cards (for UI display)
 export interface AccountWithCards extends Account {

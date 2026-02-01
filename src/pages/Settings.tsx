@@ -15,15 +15,19 @@ import {
   Loader2,
   Plus,
   Pencil,
-  Trash2
+  Trash2,
+  FileSpreadsheet,
+  Calendar,
+  Wallet
 } from 'lucide-react'
 import { PageContainer } from '@/components/layout'
 import { GlassCard } from '@/components/ui'
+import { CSVUpload, StagingReviewModal } from '@/components/feed'
 import { useAuth } from '@/context'
+import type { Account, AccountCard, Beneficiary, UserCategory, RecurringIncome } from '@/types/database'
 import { CURRENCIES, getCurrencyOptions, type Currency } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/services/supabase'
-import type { Beneficiary, UserCategory } from '@/types/database'
 
 // Default categories that come with the app
 const DEFAULT_CATEGORIES = [
@@ -491,6 +495,170 @@ function CategoryModal({
   )
 }
 
+// Recurring Income Modal
+function RecurringIncomeModal({
+  isOpen,
+  income,
+  accounts,
+  onSave,
+  onClose,
+  isLoading
+}: {
+  isOpen: boolean
+  income: RecurringIncome | null
+  accounts: Account[]
+  onSave: (name: string, amount: number, creditDay: number, accountId?: string) => void
+  onClose: () => void
+  isLoading: boolean
+}) {
+  const [name, setName] = useState(income?.name || '')
+  const [amount, setAmount] = useState(income?.amount?.toString() || '')
+  const [creditDay, setCreditDay] = useState(income?.credit_day?.toString() || '1')
+  const [accountId, setAccountId] = useState(income?.account_id || '')
+
+  useEffect(() => {
+    if (isOpen) {
+      setName(income?.name || '')
+      setAmount(income?.amount?.toString() || '')
+      setCreditDay(income?.credit_day?.toString() || '1')
+      setAccountId(income?.account_id || '')
+    }
+  }, [isOpen, income])
+
+  if (!isOpen) return null
+
+  const isEditing = !!income
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        className="w-full max-w-md"
+        onClick={e => e.stopPropagation()}
+      >
+        <GlassCard size="lg" className="relative">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-emerald-500/20">
+                <Wallet className="h-5 w-5 text-emerald-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white">
+                {isEditing ? 'Edit Recurring Income' : 'Add Recurring Income'}
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-lg hover:bg-white/10 text-slate-400 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <p className="text-sm text-slate-400 mb-4">
+            Set up recurring income like salary to auto-create transactions on your payday.
+          </p>
+
+          {/* Form */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g., Monthly Salary, Freelance Payment"
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-xl px-4 py-3 text-white placeholder:text-slate-600 outline-none focus:border-emerald-500/50 transition-colors"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Amount</label>
+              <input
+                type="number"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                step="0.01"
+                min="0"
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-xl px-4 py-3 text-white placeholder:text-slate-600 outline-none focus:border-emerald-500/50 transition-colors"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Credit Day</label>
+              <select
+                value={creditDay}
+                onChange={(e) => setCreditDay(e.target.value)}
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50 transition-colors"
+              >
+                {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                  <option key={day} value={day}>
+                    {day}{day === 1 ? 'st' : day === 2 ? 'nd' : day === 3 ? 'rd' : 'th'} of each month
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Credit to Account</label>
+              <select
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                className="w-full bg-white/[0.05] border border-white/[0.08] rounded-xl px-4 py-3 text-white outline-none focus:border-emerald-500/50 transition-colors"
+              >
+                <option value="">Select account (optional)</option>
+                {accounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>{acc.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-3 mt-6">
+            <button
+              onClick={onClose}
+              className="flex-1 px-4 py-3 rounded-xl bg-white/[0.05] text-slate-400 hover:bg-white/[0.08] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onSave(name, parseFloat(amount) || 0, parseInt(creditDay) || 1, accountId || undefined)}
+              disabled={!name.trim() || !amount || isLoading}
+              className="flex-1 px-4 py-3 rounded-xl bg-emerald-500 text-white font-medium hover:bg-emerald-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <>
+                  <Check className="h-5 w-5" />
+                  {isEditing ? 'Save' : 'Add'}
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Loading overlay */}
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50 rounded-2xl">
+              <Loader2 className="h-8 w-8 text-emerald-400 animate-spin" />
+            </div>
+          )}
+        </GlassCard>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 export function SettingsPage() {
   const { user, profile, signOut, updateProfile, defaultCurrency } = useAuth()
   const [showCurrencyModal, setShowCurrencyModal] = useState(false)
@@ -509,6 +677,53 @@ export function SettingsPage() {
   const [editingCategory, setEditingCategory] = useState<UserCategory | null>(null)
   const [isCategoryLoading, setIsCategoryLoading] = useState(false)
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null)
+  
+  // CSV Import state
+  const [showStagingReview, setShowStagingReview] = useState(false)
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [cards, setCards] = useState<AccountCard[]>([])
+  
+  // Recurring Income state
+  const [recurringIncome, setRecurringIncome] = useState<RecurringIncome[]>([])
+  const [showIncomeModal, setShowIncomeModal] = useState(false)
+  const [editingIncome, setEditingIncome] = useState<RecurringIncome | null>(null)
+  const [isIncomeLoading, setIsIncomeLoading] = useState(false)
+  const [deletingIncomeId, setDeletingIncomeId] = useState<string | null>(null)
+
+  // Fetch accounts and cards for staging modal
+  const fetchAccountsAndCards = useCallback(async () => {
+    if (!user) return
+    const [accRes, cardRes] = await Promise.all([
+      supabase.from('accounts').select('*').eq('user_id', user.id),
+      supabase.from('account_cards').select('*').eq('user_id', user.id)
+    ])
+    if (accRes.data) setAccounts(accRes.data as Account[])
+    if (cardRes.data) setCards(cardRes.data as AccountCard[])
+  }, [user])
+
+  useEffect(() => {
+    fetchAccountsAndCards()
+  }, [fetchAccountsAndCards])
+  
+  // Fetch recurring income
+  const fetchRecurringIncome = useCallback(async () => {
+    if (!user) return
+    try {
+      const { data, error } = await supabase
+        .from('recurring_income')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('name')
+      if (!error && data) setRecurringIncome(data as RecurringIncome[])
+    } catch (e) {
+      // Table might not exist yet
+      console.log('Could not fetch recurring income:', e)
+    }
+  }, [user])
+
+  useEffect(() => {
+    fetchRecurringIncome()
+  }, [fetchRecurringIncome])
 
   // Fetch beneficiaries
   const fetchBeneficiaries = useCallback(async () => {
@@ -649,6 +864,76 @@ export function SettingsPage() {
     } finally {
       setDeletingCategoryId(null)
     }
+  }
+
+  // Recurring Income handlers
+  const handleAddIncome = () => {
+    setEditingIncome(null)
+    setShowIncomeModal(true)
+  }
+
+  const handleEditIncome = (income: RecurringIncome) => {
+    setEditingIncome(income)
+    setShowIncomeModal(true)
+  }
+
+  const handleSaveIncome = async (name: string, amount: number, creditDay: number, accountId?: string) => {
+    if (!user) return
+    setIsIncomeLoading(true)
+
+    try {
+      if (editingIncome) {
+        // Update existing
+        await supabase
+          .from('recurring_income')
+          .update({ 
+            name, 
+            amount, 
+            credit_day: creditDay, 
+            account_id: accountId || null,
+            updated_at: new Date().toISOString() 
+          } as never)
+          .eq('id', editingIncome.id)
+      } else {
+        // Create new
+        await supabase
+          .from('recurring_income')
+          .insert({ 
+            user_id: user.id, 
+            name, 
+            amount, 
+            credit_day: creditDay,
+            account_id: accountId || null,
+            currency: defaultCurrency 
+          } as never)
+      }
+      await fetchRecurringIncome()
+      setShowIncomeModal(false)
+    } catch (e) {
+      console.error('Error saving recurring income:', e)
+    } finally {
+      setIsIncomeLoading(false)
+    }
+  }
+
+  const handleDeleteIncome = async (id: string) => {
+    setDeletingIncomeId(id)
+    try {
+      await supabase.from('recurring_income').delete().eq('id', id)
+      setRecurringIncome(prev => prev.filter(i => i.id !== id))
+    } finally {
+      setDeletingIncomeId(null)
+    }
+  }
+
+  const handleToggleIncomeActive = async (id: string, isActive: boolean) => {
+    await supabase
+      .from('recurring_income')
+      .update({ is_active: !isActive } as never)
+      .eq('id', id)
+    setRecurringIncome(prev => prev.map(i => 
+      i.id === id ? { ...i, is_active: !isActive } : i
+    ))
   }
 
   // Get current currency info
@@ -921,6 +1206,102 @@ export function SettingsPage() {
             </GlassCard>
           </motion.div>
 
+          {/* Recurring Income */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.375 }}
+          >
+            <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 px-1">
+              Recurring Income
+            </h3>
+            <GlassCard size="sm" className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm text-slate-400">
+                  Salary and other recurring income sources
+                </p>
+                <button
+                  onClick={handleAddIncome}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-sm font-medium hover:bg-emerald-500/30 transition-colors"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add
+                </button>
+              </div>
+
+              {recurringIncome.length === 0 ? (
+                <div className="py-6 text-center">
+                  <Wallet className="h-8 w-8 text-slate-600 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No recurring income yet</p>
+                  <p className="text-xs text-slate-600 mt-1">
+                    Add your salary or other regular income sources
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {recurringIncome.map((income) => (
+                    <div
+                      key={income.id}
+                      className={cn(
+                        "flex items-center gap-3 p-3 rounded-xl border",
+                        income.is_active 
+                          ? "bg-white/[0.03] border-white/[0.06]"
+                          : "bg-white/[0.01] border-white/[0.03] opacity-50"
+                      )}
+                    >
+                      <div className="p-2 rounded-lg bg-emerald-500/20">
+                        <Calendar className="h-4 w-4 text-emerald-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-medium truncate">
+                            {income.name}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            Day {income.credit_day}
+                          </span>
+                        </div>
+                        <p className="text-sm text-emerald-400 font-mono">
+                          +{income.currency} {income.amount.toFixed(2)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleToggleIncomeActive(income.id, income.is_active)}
+                        className={cn(
+                          "px-2 py-1 rounded-lg text-xs font-medium transition-colors",
+                          income.is_active
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-slate-500/20 text-slate-400"
+                        )}
+                      >
+                        {income.is_active ? 'Active' : 'Paused'}
+                      </button>
+                      <button
+                        onClick={() => handleEditIncome(income)}
+                        className="p-2 rounded-lg hover:bg-white/[0.05] text-slate-400 hover:text-white transition-colors"
+                        title="Edit"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteIncome(income.id)}
+                        disabled={deletingIncomeId === income.id}
+                        className="p-2 rounded-lg hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 transition-colors disabled:opacity-50"
+                        title="Delete"
+                      >
+                        {deletingIncomeId === income.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </GlassCard>
+          </motion.div>
+
           {/* Data */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -930,12 +1311,35 @@ export function SettingsPage() {
             <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2 px-1">
               Data
             </h3>
-            <GlassCard size="sm" className="divide-y divide-white/[0.06]">
-              <SettingItem
-                icon={Download}
-                label="Export Data"
-                description="Download your transactions as CSV"
-              />
+            <GlassCard size="sm" className="space-y-4">
+              {/* CSV Import */}
+              <div>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2 rounded-lg bg-amber-500/20">
+                    <FileSpreadsheet className="h-4 w-4 text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">Import Bank Statement</p>
+                    <p className="text-xs text-slate-500">Upload CSV files from your bank</p>
+                  </div>
+                </div>
+                <CSVUpload
+                  userId={user?.id || ''}
+                  onUploadComplete={(result) => {
+                    if (result.success && result.staged > 0) {
+                      setShowStagingReview(true)
+                    }
+                  }}
+                />
+              </div>
+              
+              <div className="border-t border-white/[0.06] pt-4">
+                <SettingItem
+                  icon={Download}
+                  label="Export Data"
+                  description="Download your transactions as CSV"
+                />
+              </div>
             </GlassCard>
           </motion.div>
 
@@ -1008,6 +1412,34 @@ export function SettingsPage() {
           />
         )}
       </AnimatePresence>
+
+      {/* Recurring Income Modal */}
+      <AnimatePresence>
+        {showIncomeModal && (
+          <RecurringIncomeModal
+            isOpen={showIncomeModal}
+            income={editingIncome}
+            accounts={accounts}
+            onSave={handleSaveIncome}
+            onClose={() => setShowIncomeModal(false)}
+            isLoading={isIncomeLoading}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Staging Review Modal */}
+      <StagingReviewModal
+        isOpen={showStagingReview}
+        onClose={() => setShowStagingReview(false)}
+        userId={user?.id || ''}
+        accounts={accounts}
+        cards={cards}
+        customCategories={customCategories}
+        onTransactionsUpdated={() => {
+          // Transactions updated, modal will close
+          setShowStagingReview(false)
+        }}
+      />
     </PageContainer>
   )
 }

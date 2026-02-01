@@ -68,6 +68,7 @@ export function TransactionInputToolbar({
   const [showBeneficiaryPicker, setShowBeneficiaryPicker] = useState(false)
   const [newBeneficiaryName, setNewBeneficiaryName] = useState('')
   const [isAddingBeneficiary, setIsAddingBeneficiary] = useState(false)
+  const [showMoreOptions, setShowMoreOptions] = useState(false)
 
   // Get selected items
   const selectedAccount = accounts.find(a => a.id === value.accountId)
@@ -337,89 +338,108 @@ export function TransactionInputToolbar({
         </AnimatePresence>
       </div>
 
-      {/* Currency Selector */}
-      <div className="relative">
-        <button
-          onClick={(e) => { e.stopPropagation(); closeAll(); setShowCurrencyPicker(!showCurrencyPicker) }}
-          className={cn(
-            'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm',
-            'bg-white/[0.05] border border-white/[0.08]',
-            'hover:bg-white/[0.08] transition-colors text-white'
-          )}
-        >
-          <span>{CURRENCIES[value.currency]?.flag}</span>
-          <span>{value.currency}</span>
-          <ChevronDown className="h-3 w-3 text-slate-500" />
-        </button>
+      {/* Currency Badge (always visible, compact) */}
+      <button
+        onClick={(e) => { e.stopPropagation(); closeAll(); setShowCurrencyPicker(!showCurrencyPicker) }}
+        className={cn(
+          'flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm',
+          'bg-white/[0.05] border border-white/[0.08]',
+          'hover:bg-white/[0.08] transition-colors text-white'
+        )}
+      >
+        <span>{CURRENCIES[value.currency]?.flag}</span>
+        <span className="text-xs">{value.currency}</span>
+      </button>
 
-        <AnimatePresence>
-          {showCurrencyPicker && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              onClick={(e) => e.stopPropagation()}
-              className="absolute left-0 bottom-full mb-1 w-44 p-2 rounded-xl bg-slate-900 border border-white/10 shadow-xl z-50 max-h-60 overflow-y-auto"
+      <AnimatePresence>
+        {showCurrencyPicker && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1 w-44 p-2 rounded-xl bg-slate-900 border border-white/10 shadow-xl z-50 max-h-60 overflow-y-auto"
+          >
+            {Object.entries(CURRENCIES).map(([code, { flag }]) => (
+              <button
+                key={code}
+                onClick={() => handleCurrencySelect(code as Currency)}
+                className={cn(
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm',
+                  'hover:bg-white/[0.05] transition-colors',
+                  value.currency === code ? 'text-emerald-400' : 'text-slate-400'
+                )}
+              >
+                <span>{flag}</span>
+                <span className="flex-1">{code}</span>
+                {value.currency === code && <Check className="h-4 w-4" />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* More Options Toggle */}
+      <button
+        onClick={() => setShowMoreOptions(!showMoreOptions)}
+        className={cn(
+          'flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs',
+          'border transition-colors',
+          showMoreOptions || value.isReimbursable || value.lockAccountCard
+            ? 'bg-white/[0.08] border-white/[0.15] text-white'
+            : 'bg-white/[0.03] border-white/[0.06] text-slate-500 hover:bg-white/[0.05]'
+        )}
+      >
+        <ChevronDown className={cn("h-3 w-3 transition-transform", showMoreOptions && "rotate-180")} />
+        <span>More</span>
+      </button>
+
+      {/* Expanded Options */}
+      <AnimatePresence>
+        {showMoreOptions && (
+          <motion.div
+            initial={{ opacity: 0, width: 0 }}
+            animate={{ opacity: 1, width: 'auto' }}
+            exit={{ opacity: 0, width: 0 }}
+            className="flex items-center gap-1.5 overflow-hidden"
+          >
+            {/* Lock Toggle */}
+            <button
+              onClick={handleLockToggle}
+              title={value.lockAccountCard 
+                ? "Lock ON: All transactions use selected account/card" 
+                : "Lock OFF: AI will detect accounts from text"}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm',
+                'border transition-colors',
+                value.lockAccountCard
+                  ? 'bg-blue-500/20 border-blue-500/30 text-blue-400'
+                  : 'bg-white/[0.05] border-white/[0.08] text-slate-500 hover:bg-white/[0.08]'
+              )}
             >
-              {Object.entries(CURRENCIES).map(([code, { flag }]) => (
-                <button
-                  key={code}
-                  onClick={() => handleCurrencySelect(code as Currency)}
-                  className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm',
-                    'hover:bg-white/[0.05] transition-colors',
-                    value.currency === code ? 'text-emerald-400' : 'text-slate-400'
-                  )}
-                >
-                  <span>{flag}</span>
-                  <span className="flex-1">{code}</span>
-                  {value.currency === code && <Check className="h-4 w-4" />}
-                </button>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+              {value.lockAccountCard ? (
+                <Lock className="h-3.5 w-3.5" />
+              ) : (
+                <Unlock className="h-3.5 w-3.5" />
+              )}
+            </button>
 
-      {/* Lock Account/Card Toggle - Forces toolbar selection for bulk paste */}
-      <button
-        onClick={handleLockToggle}
-        title={value.lockAccountCard 
-          ? "Lock ON: All transactions use selected account/card" 
-          : "Lock OFF: AI will detect accounts from text"}
-        className={cn(
-          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm',
-          'border transition-colors',
-          value.lockAccountCard
-            ? 'bg-blue-500/20 border-blue-500/30 text-blue-400'
-            : 'bg-white/[0.05] border-white/[0.08] text-slate-500 hover:bg-white/[0.08]'
+            {/* Reimbursement Toggle */}
+            <button
+              onClick={handleReimbursableToggle}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm',
+                'border transition-colors',
+                value.isReimbursable
+                  ? 'bg-amber-500/20 border-amber-500/30 text-amber-400'
+                  : 'bg-white/[0.05] border-white/[0.08] text-slate-500 hover:bg-white/[0.08]'
+              )}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          </motion.div>
         )}
-      >
-        {value.lockAccountCard ? (
-          <Lock className="h-3.5 w-3.5" />
-        ) : (
-          <Unlock className="h-3.5 w-3.5" />
-        )}
-        <span className="hidden sm:inline">Lock</span>
-      </button>
-
-      {/* Divider */}
-      <div className="w-px h-6 bg-white/[0.08]" />
-
-      {/* Reimbursement Toggle */}
-      <button
-        onClick={handleReimbursableToggle}
-        className={cn(
-          'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm',
-          'border transition-colors',
-          value.isReimbursable
-            ? 'bg-amber-500/20 border-amber-500/30 text-amber-400'
-            : 'bg-white/[0.05] border-white/[0.08] text-slate-500 hover:bg-white/[0.08]'
-        )}
-      >
-        <RefreshCw className="h-3.5 w-3.5" />
-        <span>Reimburse</span>
-      </button>
+      </AnimatePresence>
 
       {/* Beneficiary Selector (Conditional) */}
       <AnimatePresence>

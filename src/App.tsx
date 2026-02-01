@@ -15,7 +15,8 @@ import {
   SettingsPage, 
   LandingPage,
   AccountsPage,
-  SubscriptionsPage 
+  SubscriptionsPage,
+  BeneficiariesPage
 } from '@/pages'
 
 // Dashboard layout with header (for pages that need navigation)
@@ -87,6 +88,16 @@ function AppRoutes() {
             <ProtectedRoute>
               <DashboardLayout>
                 <SettingsPage />
+              </DashboardLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/beneficiaries"
+          element={
+            <ProtectedRoute>
+              <DashboardLayout>
+                <BeneficiariesPage />
               </DashboardLayout>
             </ProtectedRoute>
           }

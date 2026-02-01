@@ -1,12 +1,11 @@
 import { motion } from 'framer-motion'
-import { Home, CreditCard, RefreshCw, BarChart3, Settings, User } from 'lucide-react'
+import { Home, BarChart3, Settings, User } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 
+// Main navigation tabs (simplified - other pages accessible from Settings)
 const navItems = [
   { href: '/', icon: Home, label: 'Home' },
-  { href: '/accounts', icon: CreditCard, label: 'Accounts' },
-  { href: '/subscriptions', icon: RefreshCw, label: 'Subscriptions' },
   { href: '/analytics', icon: BarChart3, label: 'Analytics' },
   { href: '/settings', icon: Settings, label: 'Settings' },
 ]
@@ -40,38 +39,51 @@ export function Header() {
               </div>
             </Link>
 
-            {/* Navigation */}
-            <nav className="flex items-center gap-0.5">
-              {navItems.map((item) => {
-                const isActive = location.pathname === item.href
-                return (
-                  <Link
-                    key={item.href}
-                    to={item.href}
-                    className={cn(
-                      'flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl transition-all duration-200 min-w-[3rem]',
-                      isActive
-                        ? 'bg-white/[0.08] text-white'
-                        : 'text-slate-400 hover:text-white hover:bg-white/[0.05]'
-                    )}
-                  >
-                    <item.icon className="h-4 w-4" />
-                    <span className={cn(
-                      'text-[10px] font-medium leading-none',
-                      isActive ? 'text-white' : 'text-slate-500'
-                    )}>
-                      {item.label}
-                    </span>
-                  </Link>
-                )
-              })}
+            {/* Tab Navigation */}
+            <nav className="flex items-center">
+              <div className="flex bg-white/[0.03] rounded-xl p-1 border border-white/[0.06]">
+                {navItems.map((item) => {
+                  const isActive = location.pathname === item.href || 
+                    (item.href === '/settings' && ['/accounts', '/beneficiaries', '/subscriptions'].includes(location.pathname))
+                  
+                  return (
+                    <Link
+                      key={item.href}
+                      to={item.href}
+                      className={cn(
+                        'relative flex items-center gap-2 px-4 py-2.5 rounded-lg transition-all duration-200',
+                        isActive
+                          ? 'bg-white/[0.08] text-white shadow-lg'
+                          : 'text-slate-400 hover:text-white hover:bg-white/[0.04]'
+                      )}
+                    >
+                      <item.icon className="h-4 w-4" />
+                      <span className="text-sm font-medium hidden sm:inline">
+                        {item.label}
+                      </span>
+                      
+                      {/* Active indicator */}
+                      {isActive && (
+                        <motion.div
+                          layoutId="activeTab"
+                          className="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-0.5 bg-emerald-400 rounded-full"
+                          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                        />
+                      )}
+                    </Link>
+                  )
+                })}
+              </div>
               
               {/* User Avatar */}
-              <div className="ml-2 p-0.5 rounded-full bg-gradient-to-br from-emerald-500 to-amber-500">
+              <Link 
+                to="/settings"
+                className="ml-3 p-0.5 rounded-full bg-gradient-to-br from-emerald-500 to-amber-500 hover:opacity-80 transition-opacity"
+              >
                 <div className="p-2 rounded-full bg-slate-900">
                   <User className="h-4 w-4 text-white" />
                 </div>
-              </div>
+              </Link>
             </nav>
           </div>
         </div>

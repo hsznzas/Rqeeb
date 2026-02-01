@@ -36,7 +36,8 @@ import {
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { CURRENCIES, type Currency } from '@/lib/currency'
-import type { Account, AccountCard, Transaction, BillingCycle, NewSubscription, TransactionAttachment } from '@/types/database'
+import { getAllCategories } from '@/lib/constants'
+import type { Account, AccountCard, Transaction, BillingCycle, NewSubscription, TransactionAttachment, UserCategory } from '@/types/database'
 import { BILLING_CYCLES } from '@/types/database'
 import { AttachmentListItem } from './AttachmentItem'
 
@@ -45,22 +46,6 @@ const EMOJI_OPTIONS = [
   '☕', '🍕', '🍔', '🍿', '🎬', '🚗', '⛽', '✈️', '🏨', '🛒',
   '💊', '🏥', '📱', '💻', '🎮', '👕', '👠', '💄', '🎁', '🏋️',
   '📚', '🎵', '💳', '💰', '🏦', '📦', '🍽️', '🎉', '🏠', '⚡'
-]
-
-// Category options
-const CATEGORIES = [
-  'Food & Dining',
-  'Transportation',
-  'Shopping',
-  'Bills & Utilities',
-  'Groceries',
-  'Health',
-  'Transfer',
-  'Entertainment',
-  'Income',
-  'Travel',
-  'Education',
-  'Other'
 ]
 
 // Account icon mapping
@@ -78,6 +63,7 @@ interface TransactionDetailModalProps {
   cards: AccountCard[]
   allTransactions?: Transaction[] // For bulk edit detection
   attachments?: TransactionAttachment[]
+  customCategories?: UserCategory[] // User-defined custom categories
   onClose: () => void
   onSave: (updates: Partial<Transaction>) => Promise<void>
   onBulkSave?: (merchantName: string, updates: Partial<Transaction>) => Promise<void>
@@ -94,6 +80,7 @@ export function TransactionDetailModal({
   cards,
   allTransactions = [],
   attachments = [],
+  customCategories = [],
   onClose,
   onSave,
   onBulkSave,
@@ -646,7 +633,7 @@ export function TransactionDetailModal({
                   {/* Category Picker */}
                   {showCategoryPicker && (
                     <div className="absolute left-0 right-0 top-full mt-2 p-2 rounded-xl bg-slate-900 border border-white/10 shadow-xl z-10 max-h-48 overflow-y-auto">
-                      {CATEGORIES.map((cat) => (
+                      {getAllCategories(customCategories).map((cat) => (
                         <button
                           key={cat}
                           onClick={() => { setCategory(cat); setShowCategoryPicker(false) }}

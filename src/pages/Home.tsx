@@ -35,15 +35,19 @@ import {
   Maximize2,
   Minimize2,
   Eye,
-  EyeOff
+  EyeOff,
+  User,
+  Upload,
+  FileSpreadsheet
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { formatFeedDate } from '@/lib/dateUtils'
 import { useAuth } from '@/context'
 import { supabase } from '@/services/supabase'
-import { parseTransactions, isBulkParseError, matchPaymentHint, type ParsedTransaction, type BulkParseResult, type CustomCategory } from '@/lib/ai'
+import { parseTransactions, isBulkParseError, type ParsedTransaction, type BulkParseResult, type CustomCategory } from '@/lib/ai'
 import { convertAmount, type Currency, formatCurrencyWithSymbol } from '@/lib/currency'
+import { processCSVUpload } from '@/lib/reconciliation'
 import { generateId } from '@/lib/utils'
 import { toISODateString } from '@/lib/dateUtils'
 import type { Account, AccountCard, Transaction, Beneficiary, NewSubscription, TransactionAttachment, UserCategory } from '@/types/database'
@@ -53,7 +57,13 @@ import {
   getDefaultToolbarState, 
   type ToolbarState,
   ConflictModal,
-  type ConflictData
+  type ConflictData,
+  CSVUpload,
+  StagingReviewModal,
+  ParseReviewModal,
+  type ReviewedTransaction,
+  ChatResponse,
+  type ChatResponseData
 } from '@/components/feed'
 
 // Extended transaction type for UI
@@ -130,16 +140,18 @@ interface TransactionCardProps {
   transaction: UITransaction
   account?: Account
   card?: AccountCard
+  beneficiary?: Beneficiary
   index: number
   onDelete: (id: string) => void
   onClick: () => void
 }
 
 const TransactionCard = forwardRef<HTMLDivElement, TransactionCardProps>(
-  function TransactionCard({ transaction, account, card, index, onDelete, onClick }, ref) {
+  function TransactionCard({ transaction, account, card, beneficiary, index, onDelete, onClick }, ref) {
     const isIncome = transaction.direction === 'in'
     const isProcessing = transaction.isProcessing
     const hasConversion = transaction.original_amount && transaction.original_currency
+    const isReimbursable = transaction.is_reimbursable
     
     // Use custom logo/emoji if available, otherwise category icon
     const hasCustomLogo = transaction.logo_url && transaction.logo_url.length > 0
@@ -212,6 +224,16 @@ const TransactionCard = forwardRef<HTMLDivElement, TransactionCardProps>(
               <span>{transaction.category}</span>
               <span>•</span>
               <span>{formatFeedDate(transaction.transaction_time || transaction.created_at)}</span>
+              {/* Reimbursable Badge */}
+              {isReimbursable && (
+                <>
+                  <span>•</span>
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-xs">
+                    <User className="h-3 w-3" />
+                    {beneficiary?.name || 'Reimburse'}
+                  </span>
+                </>
+              )}
             </div>
             {/* Description preview */}
             {transaction.description && (
@@ -488,7 +510,11 @@ function SummaryHeader({
   displayCurrency,
   categoryFilter,
   onCategoryFilterChange,
-  customCategories
+  customCategories,
+  beneficiaries,
+  beneficiaryFilter,
+  onBeneficiaryFilterChange,
+  onImportClick
 }: { 
   accounts: Account[]
   summary: { income: number; expenses: number; net: number; count: number }
@@ -496,6 +522,10 @@ function SummaryHeader({
   categoryFilter: string | null
   onCategoryFilterChange: (category: string | null) => void
   customCategories: UserCategory[]
+  beneficiaries: Beneficiary[]
+  beneficiaryFilter: string | null
+  onBeneficiaryFilterChange: (beneficiaryId: string | null) => void
+  onImportClick: () => void
 }) {
   const { signOut } = useAuth()
   const defaultAccount = accounts.find(a => a.is_default)
@@ -556,6 +586,16 @@ function SummaryHeader({
               </div>
             </div>
 
+            {/* Import Statement Button */}
+            <button
+              onClick={onImportClick}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 transition-colors"
+              title="Import Bank Statement"
+            >
+              <FileSpreadsheet className="h-4 w-4 text-amber-400" />
+              <span className="text-xs font-medium text-amber-400 hidden sm:inline">Import</span>
+            </button>
+            
             {/* Navigation */}
             <a
               href="/accounts"
@@ -663,6 +703,53 @@ function SummaryHeader({
               </button>
             ))}
           </div>
+          
+          {/* Beneficiary Filter (only show if there are beneficiaries) */}
+          {beneficiaries.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide mt-2">
+              <span className="shrink-0 px-2 py-1.5 text-xs text-slate-500">Reimburse:</span>
+              <button
+                onClick={() => onBeneficiaryFilterChange(null)}
+                className={cn(
+                  'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all',
+                  beneficiaryFilter === null
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    : 'bg-white/[0.05] text-slate-400 border border-white/[0.06] hover:bg-white/[0.08]'
+                )}
+              >
+                All
+              </button>
+              <button
+                onClick={() => onBeneficiaryFilterChange('pending')}
+                className={cn(
+                  'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all',
+                  beneficiaryFilter === 'pending'
+                    ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                    : 'bg-white/[0.05] text-slate-400 border border-white/[0.06] hover:bg-white/[0.08]'
+                )}
+              >
+                Pending
+              </button>
+              {beneficiaries.map((ben) => (
+                <button
+                  key={ben.id}
+                  onClick={() => onBeneficiaryFilterChange(beneficiaryFilter === ben.id ? null : ben.id)}
+                  className={cn(
+                    'shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap flex items-center gap-1.5',
+                    beneficiaryFilter === ben.id
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                      : 'bg-white/[0.05] text-slate-400 border border-white/[0.06] hover:bg-white/[0.08]'
+                  )}
+                >
+                  <div 
+                    className="w-2 h-2 rounded-full" 
+                    style={{ backgroundColor: ben.color }}
+                  />
+                  {ben.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </motion.div>
@@ -678,7 +765,8 @@ function InputDock({
   onToolbarChange,
   onAddBeneficiary,
   onSubmit,
-  isSubmitting
+  isSubmitting,
+  onCSVDrop
 }: {
   accounts: Account[]
   cards: AccountCard[]
@@ -688,10 +776,12 @@ function InputDock({
   onAddBeneficiary: (name: string) => Promise<Beneficiary | null>
   onSubmit: (text: string) => Promise<{ success: boolean; error?: string }>
   isSubmitting: boolean
+  onCSVDrop?: (file: File) => void
 }) {
   const [input, setInput] = useState('')
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Get selected account for display
@@ -743,8 +833,38 @@ function InputDock({
     if (selectedAccount) {
       return `Type or paste transactions... (${selectedAccount.name})`
     }
-    return "Type or paste transactions (supports bulk paste)..."
+    return "Type, paste, or drop CSV file..."
   }
+
+  // Drag and drop handlers for CSV files
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    
+    const files = Array.from(e.dataTransfer.files)
+    const csvFile = files.find(f => f.name.toLowerCase().endsWith('.csv'))
+    
+    if (csvFile && onCSVDrop) {
+      onCSVDrop(csvFile)
+    } else if (files.length > 0 && !csvFile) {
+      setFeedback({ type: 'error', message: 'Please drop a CSV file (.csv)' })
+    }
+  }, [onCSVDrop])
 
   return (
     <motion.div
@@ -788,13 +908,28 @@ function InputDock({
             disabled={isSubmitting}
           />
 
-          {/* Input Area */}
-          <div className={cn(
-            'relative flex items-end gap-2 p-2 rounded-2xl',
-            'bg-white/[0.05] border border-white/[0.08]',
-            'focus-within:border-emerald-500/30 focus-within:bg-white/[0.07]',
-            'transition-all duration-200'
-          )}>
+          {/* Input Area - supports drag-and-drop CSV */}
+          <div 
+            className={cn(
+              'relative flex items-end gap-2 p-2 rounded-2xl',
+              'bg-white/[0.05] border border-white/[0.08]',
+              'focus-within:border-emerald-500/30 focus-within:bg-white/[0.07]',
+              'transition-all duration-200',
+              isDragging && 'border-amber-500/50 bg-amber-500/10'
+            )}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Drag overlay */}
+            {isDragging && (
+              <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-amber-500/10 border-2 border-dashed border-amber-500/50 z-10">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <FileSpreadsheet className="h-5 w-5" />
+                  <span className="font-medium">Drop CSV to import</span>
+                </div>
+              </div>
+            )}
             {/* Text Input - Supports bulk paste (up to 50 transactions) */}
             <textarea
               ref={textareaRef}
@@ -857,7 +992,7 @@ function InputDock({
           </div>
 
           <p className="text-center text-xs text-slate-600 mt-2">
-            Press <kbd className="px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-500">Enter</kbd> to send • Bulk paste up to 50 transactions
+            Press <kbd className="px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-500">Enter</kbd> to send • Drop CSV file to import • Ask questions about spending
           </p>
         </div>
       </div>
@@ -1058,9 +1193,27 @@ export function HomePage() {
   
   // Category filter state
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
-
-  // Get default account
-  const defaultAccount = accounts.find(a => a.is_default)
+  
+  // Beneficiary filter state
+  const [beneficiaryFilter, setBeneficiaryFilter] = useState<string | null>(null)
+  
+  // CSV Upload and Staging modal states
+  const [showCSVUpload, setShowCSVUpload] = useState(false)
+  const [showStagingReview, setShowStagingReview] = useState(false)
+  
+  // Parse Review modal state (for text input review before save)
+  const [showParseReview, setShowParseReview] = useState(false)
+  const [pendingParsedTransactions, setPendingParsedTransactions] = useState<ParsedTransaction[]>([])
+  const [pendingExtraFields, setPendingExtraFields] = useState<{
+    accountId: string | null
+    cardId: string | null
+    isReimbursable: boolean
+    beneficiaryId: string | null
+  } | null>(null)
+  
+  // Chat/Question response state
+  const [chatResponse, setChatResponse] = useState<ChatResponseData | null>(null)
+  const [isChatLoading, setIsChatLoading] = useState(false)
 
   // Calculate summary
   const summary = {
@@ -1246,98 +1399,65 @@ export function HomePage() {
     currency: toolbarState.currency
   }), [toolbarState])
 
-  // Process a single parsed transaction with smart account/card matching
-  // When lockAccountCard is ON: force toolbar selection for all transactions
-  // When lockAccountCard is OFF: prefer AI hints, fall back to toolbar/default
-  const processParsedTransaction = useCallback(async (
-    parsed: ParsedTransaction,
-    tempId: string
-  ): Promise<'saved' | 'conflict' | 'needs_clarification'> => {
-    // Check if toolbar has a selection
-    const hasToolbarSelection = toolbarState.accountId || toolbarState.cardId
+  // Detect if text is a question (conversational query)
+  const isQuestion = useCallback((text: string): boolean => {
+    const trimmed = text.trim().toLowerCase()
+    const questionStarters = [
+      'how much', 'how many', 'what', 'when', 'where', 'which', 'why', 'who',
+      'show me', 'tell me', 'can you', 'do i', 'did i', 'have i', 'am i',
+      'total', 'average', 'summary', 'breakdown', 'compare', 'trend',
+      'كم', 'متى', 'اين', 'لماذا', 'ماذا' // Arabic question words
+    ]
+    return questionStarters.some(starter => trimmed.startsWith(starter)) || trimmed.endsWith('?')
+  }, [])
+  
+  // Handle chat/question queries
+  const handleChatQuery = useCallback(async (text: string): Promise<{ success: boolean; error?: string }> => {
+    setIsChatLoading(true)
+    setChatResponse(null)
     
-    // Get the effective toolbar account (from card's parent if card selected)
-    const toolbarAccountId = toolbarState.cardId 
-      ? cards.find(c => c.id === toolbarState.cardId)?.account_id 
-      : toolbarState.accountId
-
-    // === LOCK MODE: Force toolbar selection, skip AI matching ===
-    if (toolbarState.lockAccountCard) {
-      // When locked, always use toolbar selection regardless of AI hints
-      const finalAccountId = toolbarState.accountId
-      const finalCardId = toolbarState.cardId
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          transactions: transactions.filter(t => !t.isOptimistic).map(t => ({
+            amount: t.amount,
+            currency: t.currency,
+            category: t.category,
+            merchant: t.merchant,
+            transaction_date: t.transaction_date,
+            direction: t.direction,
+            description: t.description
+          })),
+          currency: defaultCurrency
+        })
+      })
       
-      // If locked but no account selected, need clarification
-      if (!finalAccountId && accounts.length > 0) {
-        return 'needs_clarification'
+      if (!response.ok) {
+        throw new Error('Chat API error')
       }
       
-      await saveTransaction(parsed, finalAccountId, finalCardId, tempId, getExtraFields())
-      return 'saved'
+      const data = await response.json() as ChatResponseData
+      setChatResponse(data)
+      return { success: true }
+    } catch (error) {
+      console.error('Chat error:', error)
+      return { success: false, error: 'Could not process your question. Please try again.' }
+    } finally {
+      setIsChatLoading(false)
     }
-    
-    // === UNLOCK MODE: AI-first matching with conflict detection ===
-    // Check if AI detected a payment hint
-    const aiMatch = matchPaymentHint(parsed.payment_hint, accounts, cards)
-    
-    // SMART CONFLICT DETECTION (only when unlocked)
-    // Only show conflict modal if ALL conditions are met:
-    // 1. AI found a payment hint AND matched it to an account/card
-    // 2. Toolbar HAS an explicit selection
-    // 3. The AI match is DIFFERENT from toolbar selection
-    // 4. User has MORE than one account (otherwise, no choice to make)
-    const shouldShowConflict = 
-      parsed.payment_hint && 
-      aiMatch.accountId && 
-      hasToolbarSelection &&
-      accounts.length > 1 && // Skip conflict if only one account
-      (
-        aiMatch.accountId !== toolbarAccountId || 
-        (aiMatch.cardId && toolbarState.cardId && aiMatch.cardId !== toolbarState.cardId)
-      )
-    
-    if (shouldShowConflict) {
-      // Conflict detected! Store data for modal
-      // payment_hint is guaranteed to be non-null here due to shouldShowConflict check
-      setConflictData({
-        paymentHint: parsed.payment_hint!,
-        aiMatch,
-        toolbarAccountId: toolbarState.accountId,
-        toolbarCardId: toolbarState.cardId
-      })
-      setPendingConflictTx({ parsed, tempId })
-      return 'conflict'
-    }
-    
-    // No conflict - determine which account/card to use
-    // Priority when unlocked: AI match > toolbar selection > default account
-    let finalAccountId: string | null = null
-    let finalCardId: string | null = null
-    
-    if (aiMatch.accountId) {
-      // AI found a match from payment hint - use it (AI-first when unlocked)
-      finalAccountId = aiMatch.accountId
-      finalCardId = aiMatch.cardId
-    } else if (hasToolbarSelection) {
-      // Fall back to toolbar selection
-      finalAccountId = toolbarState.accountId
-      finalCardId = toolbarState.cardId
-    } else if (defaultAccount) {
-      // Fall back to default account
-      finalAccountId = defaultAccount.id
-    } else if (accounts.length > 0) {
-      // No match found and no defaults - need clarification
-      return 'needs_clarification'
-    }
-    
-    // Save with extra fields from toolbar
-    await saveTransaction(parsed, finalAccountId, finalCardId, tempId, getExtraFields())
-    return 'saved'
-  }, [accounts, cards, defaultAccount, toolbarState, saveTransaction, getExtraFields])
+  }, [transactions, defaultCurrency])
 
-  // Handle text submission - supports bulk transactions with conflict detection
+  // Handle text submission - parses with AI and shows review modal
   const handleSubmit = useCallback(async (text: string): Promise<{ success: boolean; error?: string }> => {
     if (!user || isSubmitting) return { success: false, error: 'Not ready' }
+    
+    // Check if this is a question/query
+    if (isQuestion(text)) {
+      return handleChatQuery(text)
+    }
 
     setIsSubmitting(true)
 
@@ -1393,138 +1513,164 @@ export function HomePage() {
 
       const { transactions: parsedTransactions } = result
       console.log(`Parsed ${parsedTransactions.length} transaction(s)`)
-
-      // Track transactions that need clarification
-      const needsClarification: { parsed: ParsedTransaction; tempId: string }[] = []
       
-      // Initialize batch progress for bulk operations (3+ transactions)
-      const isBulkOperation = parsedTransactions.length >= 3
-      let successCount = 0
-      let failCount = 0
-      
-      if (isBulkOperation) {
-        setBatchProgress({
-          total: parsedTransactions.length,
-          processed: 0,
-          succeeded: 0,
-          failed: 0,
-          isComplete: false
-        })
-        setShowBatchProgress(true)
-      }
-
-      // Process each transaction
-      for (let i = 0; i < parsedTransactions.length; i++) {
-        const parsed = parsedTransactions[i]
-        const tempId = generateId()
-
-        // Create optimistic entry for this transaction
-        // When locked: use toolbar account/card
-        // When unlocked: show null until AI matching completes
-        const optimisticTx: UITransaction = {
-          id: tempId,
-          user_id: user.id,
-          amount: parsed.amount,
-          currency: toolbarState.currency,
-          direction: parsed.direction,
-          category: parsed.category,
-          merchant: parsed.merchant,
-          transaction_date: parsed.transaction_datetime.split('T')[0],
-          transaction_time: parsed.transaction_datetime,
-          raw_log_id: null,
-          account_id: toolbarState.lockAccountCard ? toolbarState.accountId : null,
-          card_id: toolbarState.lockAccountCard ? toolbarState.cardId : null,
-          original_amount: null,
-          original_currency: null,
-          conversion_rate: null,
-          notes: parsed.notes,
-          description: parsed.description, // Include rich data
-          logo_url: null,
-          beneficiary_id: toolbarState.beneficiaryId,
-          is_reimbursable: toolbarState.isReimbursable,
-          created_at: new Date().toISOString(),
-          isOptimistic: true,
-          isProcessing: true,
-        }
-
-        setTransactions(prev => [optimisticTx, ...prev])
-
-        // Try to process with account matching and conflict detection
-        const processResult = await processParsedTransaction(parsed, tempId)
-
-        if (processResult === 'conflict') {
-          // Show conflict modal - stop processing further transactions
-          setShowConflictModal(true)
-          if (isBulkOperation) setShowBatchProgress(false)
-          setIsSubmitting(false)
-          return { success: true } // Conflict modal will handle it
-        } else if (processResult === 'needs_clarification') {
-          // Needs manual account selection
-          needsClarification.push({ parsed, tempId })
-          failCount++
-          
-          // Update the UI to show it's waiting for clarification
-          setTransactions(prev =>
-            prev.map(t => t.id === tempId ? {
-              ...t,
-              isProcessing: false,
-            } : t)
-          )
-        } else {
-          // Successfully saved
-          successCount++
-        }
-        
-        // Update batch progress
-        if (isBulkOperation) {
-          setBatchProgress(prev => ({
-            ...prev,
-            processed: i + 1,
-            succeeded: successCount,
-            failed: failCount
-          }))
-        }
-      }
-
-      // Mark batch as complete
-      if (isBulkOperation) {
-        setBatchProgress(prev => ({
-          ...prev,
-          isComplete: true,
-          succeeded: successCount,
-          failed: needsClarification.length
-        }))
-      }
-
-      // If any transactions need clarification, show modal for the first one
-      if (needsClarification.length > 0) {
-        const first = needsClarification[0]
-        setPendingParsedData(first.parsed)
-        setPendingTempId(first.tempId)
-        setPendingBulkTransactions(needsClarification.slice(1))
-        
-        // Close batch progress first, then show clarification
-        if (isBulkOperation) {
-          setTimeout(() => {
-            setShowBatchProgress(false)
-            setShowClarification(true)
-          }, 1500)
-        } else {
-          setShowClarification(true)
-        }
-      }
-
+      // Show review modal instead of saving immediately
+      setPendingParsedTransactions(parsedTransactions)
+      setPendingExtraFields({
+        accountId: toolbarState.accountId,
+        cardId: toolbarState.cardId,
+        isReimbursable: toolbarState.isReimbursable,
+        beneficiaryId: toolbarState.beneficiaryId
+      })
+      setShowParseReview(true)
+      setIsSubmitting(false)
       return { success: true }
-
     } catch (error) {
-      console.error('Error processing transactions:', error)
+      console.error('Error parsing transactions:', error)
       setTransactions(prev => prev.filter(t => t.id !== processingTempId))
-      setShowBatchProgress(false)
       return { success: false, error: 'Something went wrong. Please try again.' }
     } finally {
       setIsSubmitting(false)
     }
-  }, [user, isSubmitting, toolbarState, processParsedTransaction])
+  }, [user, isSubmitting, toolbarState, customCategories])
+  
+  // Handle confirmed transactions from ParseReviewModal
+  const handleConfirmParsedTransactions = useCallback(async (reviewed: ReviewedTransaction[]) => {
+    if (!user || !pendingExtraFields) return
+    
+    setIsSubmitting(true)
+    
+    // Initialize batch progress for bulk operations
+    const isBulkOperation = reviewed.length >= 3
+    if (isBulkOperation) {
+      setBatchProgress({
+        total: reviewed.length,
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        isComplete: false
+      })
+      setShowBatchProgress(true)
+    }
+    
+    let successCount = 0
+    let failCount = 0
+    
+    for (let i = 0; i < reviewed.length; i++) {
+      const tx = reviewed[i]
+      const tempId = generateId()
+      
+      // Create optimistic entry
+      const optimisticTx: UITransaction = {
+        id: tempId,
+        user_id: user.id,
+        amount: tx.amount,
+        currency: tx.currency,
+        direction: tx.direction,
+        category: tx.category,
+        merchant: tx.merchant,
+        transaction_date: tx.editedDate || tx.transaction_datetime.split('T')[0],
+        transaction_time: tx.transaction_datetime,
+        raw_log_id: null,
+        account_id: pendingExtraFields.accountId,
+        card_id: pendingExtraFields.cardId,
+        original_amount: null,
+        original_currency: null,
+        conversion_rate: null,
+        notes: tx.notes,
+        description: tx.description,
+        logo_url: null,
+        beneficiary_id: pendingExtraFields.beneficiaryId,
+        is_reimbursable: pendingExtraFields.isReimbursable,
+        created_at: new Date().toISOString(),
+        isOptimistic: true,
+        isProcessing: true,
+      }
+      
+      setTransactions(prev => [optimisticTx, ...prev])
+      
+      try {
+        // Save directly to database (skip account matching since user reviewed)
+        const txData = {
+          user_id: user.id,
+          amount: tx.amount,
+          currency: tx.currency,
+          direction: tx.direction,
+          category: tx.category,
+          merchant: tx.merchant,
+          transaction_date: tx.editedDate || tx.transaction_datetime.split('T')[0],
+          transaction_time: tx.transaction_datetime,
+          account_id: pendingExtraFields.accountId,
+          card_id: pendingExtraFields.cardId,
+          notes: tx.notes,
+          description: tx.description,
+          beneficiary_id: pendingExtraFields.beneficiaryId,
+          is_reimbursable: pendingExtraFields.isReimbursable,
+        }
+        
+        const { data: savedTx, error } = await supabase
+          .from('transactions')
+          .insert(txData as never)
+          .select()
+          .single()
+        
+        if (error) throw error
+        
+        const saved = savedTx as Transaction
+        
+        // Update optimistic entry with real data
+        setTransactions(prev =>
+          prev.map(t => t.id === tempId ? {
+            ...t,
+            id: saved.id,
+            isOptimistic: false,
+            isProcessing: false,
+          } : t)
+        )
+        successCount++
+      } catch (error) {
+        console.error('Error saving transaction:', error)
+        // Mark as failed
+        setTransactions(prev =>
+          prev.map(t => t.id === tempId ? {
+            ...t,
+            isProcessing: false,
+            isFailed: true,
+          } : t)
+        )
+        failCount++
+      }
+      
+      // Update batch progress
+      if (isBulkOperation) {
+        setBatchProgress(prev => ({
+          ...prev,
+          processed: i + 1,
+          succeeded: successCount,
+          failed: failCount
+        }))
+      }
+    }
+    
+    // Complete batch progress
+    if (isBulkOperation) {
+      setBatchProgress(prev => ({ ...prev, isComplete: true }))
+      setTimeout(() => setShowBatchProgress(false), 2000)
+    }
+    
+    // Clean up
+    setPendingParsedTransactions([])
+    setPendingExtraFields(null)
+    setShowParseReview(false)
+    setIsSubmitting(false)
+  }, [user, pendingExtraFields])
+  
+  // Handle cancel from ParseReviewModal  
+  const handleCancelParseReview = useCallback(() => {
+    setPendingParsedTransactions([])
+    setPendingExtraFields(null)
+    setShowParseReview(false)
+  }, [])
 
   // Handle account/card selection from modal
   const handleAccountSelect = useCallback(async (accountId: string, cardId: string | null) => {
@@ -1883,6 +2029,10 @@ export function HomePage() {
         categoryFilter={categoryFilter}
         onCategoryFilterChange={setCategoryFilter}
         customCategories={customCategories}
+        beneficiaries={beneficiaries}
+        beneficiaryFilter={beneficiaryFilter}
+        onBeneficiaryFilterChange={setBeneficiaryFilter}
+        onImportClick={() => setShowCSVUpload(true)}
       />
 
       {/* Feed Area */}
@@ -1899,12 +2049,18 @@ export function HomePage() {
               <AnimatePresence mode="popLayout">
                 {transactions
                   .filter(t => !categoryFilter || t.category === categoryFilter)
+                  .filter(t => {
+                    if (!beneficiaryFilter) return true
+                    if (beneficiaryFilter === 'pending') return t.is_reimbursable && !t.beneficiary_id
+                    return t.beneficiary_id === beneficiaryFilter
+                  })
                   .map((transaction, index) => (
                   <TransactionCard
                     key={transaction.id}
                     transaction={transaction}
                     account={accounts.find(a => a.id === transaction.account_id)}
                     card={cards.find(c => c.id === transaction.card_id)}
+                    beneficiary={beneficiaries.find(b => b.id === transaction.beneficiary_id)}
                     index={index}
                     onDelete={handleDelete}
                     onClick={() => handleTransactionClick(transaction)}
@@ -1916,6 +2072,17 @@ export function HomePage() {
         </div>
       </div>
 
+      {/* Chat Response (for questions) */}
+      <AnimatePresence>
+        {chatResponse && (
+          <ChatResponse
+            response={chatResponse}
+            currency={defaultCurrency}
+            onDismiss={() => setChatResponse(null)}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Input Dock with Smart Toolbar */}
       <InputDock
         accounts={accounts}
@@ -1925,7 +2092,26 @@ export function HomePage() {
         onToolbarChange={setToolbarState}
         onAddBeneficiary={handleAddBeneficiary}
         onSubmit={handleSubmit}
-        isSubmitting={isSubmitting}
+        isSubmitting={isSubmitting || isChatLoading}
+        onCSVDrop={async (file) => {
+          // Directly process the dropped CSV file
+          if (!user?.id) return
+          setIsSubmitting(true)
+          try {
+            const result = await processCSVUpload(user.id, file)
+            if (result.success && result.staged > 0) {
+              // Open staging review modal to review imported transactions
+              setShowStagingReview(true)
+            } else if (result.errors.length > 0) {
+              // Show first few errors
+              console.error('CSV import errors:', result.errors)
+            }
+          } catch (error) {
+            console.error('CSV drop error:', error)
+          } finally {
+            setIsSubmitting(false)
+          }
+        }}
       />
 
       {/* Account/Card Selection Modal */}
@@ -1976,6 +2162,7 @@ export function HomePage() {
         cards={cards}
         allTransactions={transactions as Transaction[]}
         attachments={transactionAttachments}
+        customCategories={customCategories}
         onClose={() => { 
           setShowDetailModal(false)
           setSelectedTransaction(null)
@@ -1987,6 +2174,76 @@ export function HomePage() {
         onConvertToSubscription={handleConvertToSubscription}
         onUploadAttachment={handleUploadAttachment}
         onDeleteAttachment={handleDeleteAttachment}
+      />
+
+      {/* CSV Upload Modal */}
+      <AnimatePresence>
+        {showCSVUpload && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowCSVUpload(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-md bg-slate-900 rounded-2xl border border-white/10 p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/20">
+                    <Upload className="h-5 w-5 text-amber-400" />
+                  </div>
+                  <h2 className="text-xl font-bold text-white">Import Bank Statement</h2>
+                </div>
+                <button
+                  onClick={() => setShowCSVUpload(false)}
+                  className="p-2 rounded-lg hover:bg-white/10 text-slate-400 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <p className="text-sm text-slate-400 mb-4">
+                Upload a CSV file exported from your bank. Transactions will be staged for review before being added.
+              </p>
+              <CSVUpload
+                userId={user?.id || ''}
+                onUploadComplete={(result) => {
+                  if (result.success && result.staged > 0) {
+                    setShowCSVUpload(false)
+                    setShowStagingReview(true)
+                  }
+                }}
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Staging Review Modal */}
+      <StagingReviewModal
+        isOpen={showStagingReview}
+        onClose={() => setShowStagingReview(false)}
+        userId={user?.id || ''}
+        accounts={accounts}
+        cards={cards}
+        customCategories={customCategories}
+        onTransactionsUpdated={fetchData}
+      />
+
+      {/* Parse Review Modal (for text input) */}
+      <ParseReviewModal
+        isOpen={showParseReview}
+        onClose={() => setShowParseReview(false)}
+        parsedTransactions={pendingParsedTransactions}
+        customCategories={customCategories}
+        userId={user?.id || ''}
+        onConfirm={handleConfirmParsedTransactions}
+        onCancel={handleCancelParseReview}
       />
     </div>
   )
