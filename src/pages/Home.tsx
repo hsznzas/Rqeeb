@@ -47,7 +47,7 @@ import { useAuth } from '@/context'
 import { supabase } from '@/services/supabase'
 import { parseTransactions, isBulkParseError, type ParsedTransaction, type BulkParseResult, type CustomCategory } from '@/lib/ai'
 import { convertAmount, type Currency, formatCurrencyWithSymbol } from '@/lib/currency'
-import { processCSVUpload } from '@/lib/reconciliation'
+// processCSVUpload moved to use AI-powered API instead
 import { generateId } from '@/lib/utils'
 import { toISODateString } from '@/lib/dateUtils'
 import type { Account, AccountCard, Transaction, Beneficiary, NewSubscription, TransactionAttachment, UserCategory } from '@/types/database'
@@ -63,7 +63,8 @@ import {
   ParseReviewModal,
   type ReviewedTransaction,
   ChatResponse,
-  type ChatResponseData
+  type ChatResponseData,
+  CSVQuestionModal
 } from '@/components/feed'
 
 // Extended transaction type for UI
@@ -766,7 +767,9 @@ function InputDock({
   onAddBeneficiary,
   onSubmit,
   isSubmitting,
-  onCSVDrop
+  onCSVDrop,
+  pendingCSVFile,
+  onClearCSV
 }: {
   accounts: Account[]
   cards: AccountCard[]
@@ -774,9 +777,11 @@ function InputDock({
   toolbarState: ToolbarState
   onToolbarChange: (state: ToolbarState) => void
   onAddBeneficiary: (name: string) => Promise<Beneficiary | null>
-  onSubmit: (text: string) => Promise<{ success: boolean; error?: string }>
+  onSubmit: (text: string, csvFile?: File) => Promise<{ success: boolean; error?: string }>
   isSubmitting: boolean
   onCSVDrop?: (file: File) => void
+  pendingCSVFile?: File | null
+  onClearCSV?: () => void
 }) {
   const [input, setInput] = useState('')
   const [feedback, setFeedback] = useState<{ type: 'error' | 'success'; message: string } | null>(null)
@@ -799,13 +804,14 @@ function InputDock({
   }, [isExpanded])
 
   const handleSubmit = useCallback(async () => {
-    if (!input.trim() || isSubmitting) return
+    // Allow submit with CSV even if input is empty (will use default context)
+    if ((!input.trim() && !pendingCSVFile) || isSubmitting) return
     
-    const result = await onSubmit(input.trim())
+    const result = await onSubmit(input.trim(), pendingCSVFile || undefined)
     
     if (result.success) {
       setInput('')
-      setFeedback({ type: 'success', message: 'Transaction(s) added!' })
+      setFeedback({ type: 'success', message: pendingCSVFile ? 'CSV processed!' : 'Transaction(s) added!' })
       setIsExpanded(false)
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto'
@@ -814,9 +820,9 @@ function InputDock({
       setTimeout(() => setFeedback(null), 2000)
     } else {
       // Keep the input text on failure so user can retry
-      setFeedback({ type: 'error', message: result.error || 'Failed to process transaction' })
+      setFeedback({ type: 'error', message: result.error || 'Failed to process' })
     }
-  }, [input, isSubmitting, onSubmit])
+  }, [input, isSubmitting, onSubmit, pendingCSVFile])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -825,8 +831,11 @@ function InputDock({
     }
   }, [handleSubmit])
 
-  // Get placeholder text based on toolbar state
+  // Get placeholder text based on toolbar state and pending CSV
   const getPlaceholder = () => {
+    if (pendingCSVFile) {
+      return `Add context for ${pendingCSVFile.name} (e.g., "AED from ADIB, only Jan 2026")...`
+    }
     if (selectedCard) {
       return `Type or paste transactions... (${selectedCard.name} ****${selectedCard.last_4_digits})`
     }
@@ -877,6 +886,31 @@ function InputDock({
       
       <div className="relative bg-slate-950/90 backdrop-blur-xl border-t border-white/[0.06]">
         <div className="max-w-2xl mx-auto px-4 py-4">
+          {/* Pending CSV Indicator */}
+          <AnimatePresence>
+            {pendingCSVFile && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl mb-3 text-sm bg-amber-500/10 text-amber-400 border border-amber-500/20"
+              >
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="h-4 w-4" />
+                  <span className="truncate max-w-[200px]">{pendingCSVFile.name}</span>
+                  <span className="text-amber-500/70">ready to import</span>
+                </div>
+                <button 
+                  onClick={onClearCSV}
+                  className="p-1 rounded hover:bg-amber-500/20 transition-colors"
+                  title="Remove CSV"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Feedback */}
           <AnimatePresence>
             {feedback && (
@@ -974,12 +1008,14 @@ function InputDock({
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleSubmit}
-              disabled={!input.trim() || isSubmitting}
+              disabled={(!input.trim() && !pendingCSVFile) || isSubmitting}
               className={cn(
                 'shrink-0 p-3 rounded-xl',
                 'transition-all duration-200',
-                input.trim() && !isSubmitting
-                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25' 
+                (input.trim() || pendingCSVFile) && !isSubmitting
+                  ? pendingCSVFile 
+                    ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-lg shadow-amber-500/25'
+                    : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/25' 
                   : 'bg-white/[0.05] text-slate-500 cursor-not-allowed'
               )}
             >
@@ -1214,6 +1250,11 @@ export function HomePage() {
   // Chat/Question response state
   const [chatResponse, setChatResponse] = useState<ChatResponseData | null>(null)
   const [isChatLoading, setIsChatLoading] = useState(false)
+  
+  // CSV conversation flow state
+  const [pendingCSVFile, setPendingCSVFile] = useState<File | null>(null)
+  const [csvQuestion, setCsvQuestion] = useState<{ question: string; context: string; options: string[]; allowCustom: boolean } | null>(null)
+  const [csvConversationContext, setCsvConversationContext] = useState<string>('')
 
   // Calculate summary
   const summary = {
@@ -1533,6 +1574,196 @@ export function HomePage() {
       setIsSubmitting(false)
     }
   }, [user, isSubmitting, toolbarState, customCategories])
+  
+  // Handle submission with optional CSV file
+  const handleSubmitWithCSV = useCallback(async (
+    text: string, 
+    csvFile?: File
+  ): Promise<{ success: boolean; error?: string }> => {
+    // If no CSV file, use regular submit
+    if (!csvFile) {
+      return handleSubmit(text)
+    }
+    
+    // Process CSV with AI
+    if (!user) return { success: false, error: 'Not logged in' }
+    
+    setIsSubmitting(true)
+    
+    try {
+      // Read CSV file content
+      const csvContent = await csvFile.text()
+      
+      // Call the AI-powered CSV analysis endpoint
+      const response = await fetch('/api/analyze-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csvContent,
+          instructions: text || '',
+          previousAnswer: csvConversationContext ? undefined : undefined,
+          conversationContext: csvConversationContext || undefined
+        })
+      })
+      
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Unknown error' }))
+        return { success: false, error: error.error || 'CSV analysis failed' }
+      }
+      
+      const result = await response.json()
+      
+      if (result.type === 'question') {
+        // AI needs clarification - show question modal
+        setCsvQuestion({
+          question: result.question,
+          context: result.context || '',
+          options: result.options || [],
+          allowCustom: result.allowCustom !== false
+        })
+        // Keep the CSV file pending
+        setIsSubmitting(false)
+        return { success: true } // Don't clear the input - user needs to answer
+      }
+      
+      if (result.type === 'transactions' && result.transactions?.length > 0) {
+        // Got parsed transactions - show in review modal
+        const parsedTransactions: ParsedTransaction[] = result.transactions.map((tx: {
+          amount: number
+          currency: string
+          category: string
+          merchant: string | null
+          transaction_datetime: string
+          direction: 'in' | 'out'
+          description: string | null
+        }) => ({
+          amount: tx.amount,
+          currency: tx.currency,
+          category: tx.category,
+          merchant: tx.merchant,
+          transaction_datetime: tx.transaction_datetime,
+          direction: tx.direction,
+          payment_hint: null,
+          notes: tx.description,
+          description: tx.description
+        }))
+        
+        // Clear CSV state
+        setPendingCSVFile(null)
+        setCsvQuestion(null)
+        setCsvConversationContext('')
+        
+        // Show in review modal
+        setPendingParsedTransactions(parsedTransactions)
+        setPendingExtraFields({
+          accountId: toolbarState.accountId,
+          cardId: toolbarState.cardId,
+          isReimbursable: false,
+          beneficiaryId: null
+        })
+        setShowParseReview(true)
+        
+        return { success: true }
+      }
+      
+      return { success: false, error: result.summary || 'No transactions found in CSV' }
+      
+    } catch (error) {
+      console.error('CSV processing error:', error)
+      return { success: false, error: 'Failed to process CSV' }
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [user, handleSubmit, csvConversationContext, toolbarState])
+  
+  // Handle answer to CSV question
+  const handleCSVQuestionAnswer = useCallback(async (answer: string) => {
+    if (!pendingCSVFile || !user) return
+    
+    setIsSubmitting(true)
+    
+    // Add the answer to conversation context
+    const newContext = csvConversationContext 
+      ? `${csvConversationContext}\nQ: ${csvQuestion?.question}\nA: ${answer}`
+      : `Q: ${csvQuestion?.question}\nA: ${answer}`
+    setCsvConversationContext(newContext)
+    
+    try {
+      const csvContent = await pendingCSVFile.text()
+      
+      const response = await fetch('/api/analyze-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          csvContent,
+          instructions: '',
+          previousAnswer: answer,
+          conversationContext: newContext
+        })
+      })
+      
+      if (!response.ok) {
+        console.error('CSV answer processing failed')
+        setCsvQuestion(null)
+        return
+      }
+      
+      const result = await response.json()
+      
+      if (result.type === 'question') {
+        // Another question
+        setCsvQuestion({
+          question: result.question,
+          context: result.context || '',
+          options: result.options || [],
+          allowCustom: result.allowCustom !== false
+        })
+      } else if (result.type === 'transactions' && result.transactions?.length > 0) {
+        // Got transactions
+        const parsedTransactions: ParsedTransaction[] = result.transactions.map((tx: {
+          amount: number
+          currency: string
+          category: string
+          merchant: string | null
+          transaction_datetime: string
+          direction: 'in' | 'out'
+          description: string | null
+        }) => ({
+          amount: tx.amount,
+          currency: tx.currency,
+          category: tx.category,
+          merchant: tx.merchant,
+          transaction_datetime: tx.transaction_datetime,
+          direction: tx.direction,
+          payment_hint: null,
+          notes: tx.description,
+          description: tx.description
+        }))
+        
+        // Clear CSV state
+        setPendingCSVFile(null)
+        setCsvQuestion(null)
+        setCsvConversationContext('')
+        
+        // Show in review modal
+        setPendingParsedTransactions(parsedTransactions)
+        setPendingExtraFields({
+          accountId: toolbarState.accountId,
+          cardId: toolbarState.cardId,
+          isReimbursable: false,
+          beneficiaryId: null
+        })
+        setShowParseReview(true)
+      } else {
+        setCsvQuestion(null)
+      }
+    } catch (error) {
+      console.error('Error processing CSV answer:', error)
+      setCsvQuestion(null)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }, [pendingCSVFile, user, csvConversationContext, csvQuestion, toolbarState])
   
   // Handle confirmed transactions from ParseReviewModal
   const handleConfirmParsedTransactions = useCallback(async (reviewed: ReviewedTransaction[]) => {
@@ -2091,26 +2322,17 @@ export function HomePage() {
         toolbarState={toolbarState}
         onToolbarChange={setToolbarState}
         onAddBeneficiary={handleAddBeneficiary}
-        onSubmit={handleSubmit}
+        onSubmit={handleSubmitWithCSV}
         isSubmitting={isSubmitting || isChatLoading}
-        onCSVDrop={async (file) => {
-          // Directly process the dropped CSV file
-          if (!user?.id) return
-          setIsSubmitting(true)
-          try {
-            const result = await processCSVUpload(user.id, file)
-            if (result.success && result.staged > 0) {
-              // Open staging review modal to review imported transactions
-              setShowStagingReview(true)
-            } else if (result.errors.length > 0) {
-              // Show first few errors
-              console.error('CSV import errors:', result.errors)
-            }
-          } catch (error) {
-            console.error('CSV drop error:', error)
-          } finally {
-            setIsSubmitting(false)
-          }
+        onCSVDrop={(file) => {
+          // Store the CSV file and wait for user context
+          setPendingCSVFile(file)
+        }}
+        pendingCSVFile={pendingCSVFile}
+        onClearCSV={() => {
+          setPendingCSVFile(null)
+          setCsvQuestion(null)
+          setCsvConversationContext('')
         }}
       />
 
@@ -2234,6 +2456,25 @@ export function HomePage() {
         customCategories={customCategories}
         onTransactionsUpdated={fetchData}
       />
+
+      {/* CSV Question Modal */}
+      {csvQuestion && (
+        <CSVQuestionModal
+          isOpen={!!csvQuestion}
+          question={csvQuestion}
+          onAnswer={handleCSVQuestionAnswer}
+          onSkip={() => {
+            // Process with defaults
+            handleCSVQuestionAnswer('Use defaults')
+          }}
+          onCancel={() => {
+            setPendingCSVFile(null)
+            setCsvQuestion(null)
+            setCsvConversationContext('')
+          }}
+          isLoading={isSubmitting}
+        />
+      )}
 
       {/* Parse Review Modal (for text input) */}
       <ParseReviewModal
